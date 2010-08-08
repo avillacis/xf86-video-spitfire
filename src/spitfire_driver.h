@@ -152,9 +152,9 @@ typedef struct _Spitfire {
     /* These are linear addresses. */
     struct spitfire_region   MmioRegion;
     struct spitfire_region   FbRegion;
-    /*struct spitfire_region   ApertureRegion;*/
 
     unsigned char*	MapBase;
+    unsigned int        MapOffset;
     unsigned char*	FBBase;
     unsigned char*	FBStart;
     CARD32 volatile *	ShadowVirtual;
@@ -227,7 +227,9 @@ typedef struct _Spitfire {
 } SpitfireRec, *SpitfirePtr;
 
 #define DEVPTR(p)	((SpitfirePtr)((p)->driverPrivate))
-
+/* This macro assumes there is a variable "pdrv" in scope of type SpitfirePtr */
+#define SPITFIRE_MMIO (pdrv->MapBase + pdrv->MapOffset)
+ 
 /* Prototypes */
 
 void SpitfireAdjustFrame(int scrnIndex, int y, int x, int flags);

@@ -1,9 +1,6 @@
 #if !defined _SPITFIRE_ACCEL
 #define _SPITFIRE_ACCEL
 
-/* This macro assumes there is a variable "pdrv" in scope of type SpitfirePtr */
-#define SPITFIRE_MMIO (pdrv->MapBase)
-
 /* Documented registers for the Spitfire 64111 2D engine */
 #define SPITFIRE_CP_STATUS      0x10
 #define     SPITFIRE_CP_BUSY                    0x80

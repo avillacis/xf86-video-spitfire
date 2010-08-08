@@ -32,7 +32,6 @@
 #include "miline.h"
 
 #include "spitfire_driver.h"
-
 #include  "spitfire_accel.h"
 
 Bool SpitfireEXAInit(ScreenPtr pScreen);
