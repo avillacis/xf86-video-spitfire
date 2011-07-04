@@ -63,6 +63,10 @@ CPPFLAGS="$CPPFLAGS $XORG_CFLAGS"
 AC_CHECK_DECL(XSERVER_LIBPCIACCESS,
               [XSERVER_LIBPCIACCESS=yes], [XSERVER_LIBPCIACCESS=no],
               [#include "xorg-server.h"])
+AC_CHECK_DECL(pci_device_enable,
+	      [AC_DEFINE(HAVE_PCI_DEVICE_ENABLE, 1, [Have pci_device_enable prototype])],
+	      [],
+	      [#include <pciaccess.h>])
 AC_CHECK_HEADER(xf1bpp.h,[AC_DEFINE(HAVE_XF1BPP, 1, [Have 1bpp support])],[])
 AC_CHECK_HEADER(xf4bpp.h,[AC_DEFINE(HAVE_XF4BPP, 1, [Have 4bpp support])],[])
 CPPFLAGS="$SAVE_CPPFLAGS"

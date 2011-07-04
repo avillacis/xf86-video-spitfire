@@ -29,8 +29,8 @@
 #include "spitfire_accel.h"
 
 
-#define TRACEON
-#define DUMP_REGISTERS
+/*#define TRACEON*/
+/*#define DUMP_REGISTERS*/
 
 #ifdef TRACEON
 #define TRACE(prms)     ErrorF prms
@@ -100,69 +100,48 @@ enum OAKCHIPTAGS {
  * documentation on what the values mean, or how to compute a value given an 
  * arbitrary target clock rate. The values here are gleaned from the register
  * values dumped by the driver */
-static unsigned int OTIClockValues[][3] = {
-    { 0x42, 0x53, 25290 }, /* 25.290 */
-    { 0x47, 0x52,     0 }, /* 28.322 */
-    { 0x80, 0x4d, 65330 }, /* 65.220 */
-    { 0x18, 0x04, 76500 }, /* 76.460 */
-    { 0x31, 0x43, 81610 },
-    { 0x00, 0x5c, 131545 }, /* 131.515 */
- 
-    {0, 0, 0},
-    { 0xff, 0xff, 0 },
-    { 0xff, 0xff, 0 },
-
-    { 0x42, 0x53, 0 }, /* 25.290 */
-    { 0x47, 0x52, 0 }, /* 28.322 */
-    { 0x80, 0x4d, 0 }, /* 65.220 */
-    { 0x18, 0x04, 0 }, /* 76.460 */
-    { 0x31, 0x43, 0 },
-    { 0x00, 0x5c, 0 }, /* 131.515 */
+static unsigned int OTIClockValues[][7] = {
+    { 0x42,0x53,25270 },
+    { 0x47,0x52,28322 },
 
 
-    { 0x55, 0x33, 0 }, /* 25.140 */
-    { 0x4f, 0x31, 0 }, /* 26.150 */
-    { 0x99, 0x5e, 0 }, /* 36.050 */
-
-    { 0x5d, 0x52, 0 }, /* 36.260 */
-
-    { 0x3d, 0x49, 0 }, /* 45.420 */
-    { 0xbd, 0x54, 0 }, /* 63.980 */
-    { 0x0e, 0x02, 0 }, /* 64.840  */
-    { 0xb1, 0x51, 0 }, /* 69.970 */
-
-    { 0x59, 0x0e, 0 }, /* 83.370 */
-    { 0x11, 0x02, 0 }, /* 89.880 */
-    { 0x4b, 0x0b, 0 }, /* 91.900 */
-    { 0x7a, 0x0f, 0 }, /* 109.970  */
-    { 0x4d, 0x08, 0 }, /* 121.620 */
-    { 0x00, 0x5c, /* 131545 */ 0 }, /* 131.515 */
-    { 0x00, 0x5e, 0 }, /* 135.470 */
-    { 0x00, 0x5f, 0 }, /* 135.200 */
-    { 0x00, 0x61, 0 }, /* 135.140 */
-    { 0x00, 0x62, 0 }, /* 135.590 */
-
-    { 0xbd, 0x18, 0 },
-    { 0x24, 0x82, 0 },
-    { 0xa8, 0x97, 0 },
-
-    { 0x24, 0x83, 0 },
-    { 0x57, 0x4f, 0 },
-    { 0xd7, 0x5e, 0 },
-    { 0x97, 0x55, 0 },
-
-    { 0xdb, 0x57, 0 },
-
-    { 0, 0, 0 },
-
-    { 0x66, 0x13, 0 },
-    { 0x19, 0x04, 0 },
-    { 0x57, 0x0f, 0 },
-    { 0xa1, 0x14, 0 },
-    { 0xdb, 0x17, 0 },
-    { 0x3a, 0x05, 0 },
-
-
+    { 0x4f,0x31,24460 },
+    { 0x55,0x33,25160 },
+    { 0xa8,0x97,25240 },
+    { 0x42,0x53,25270 },
+    { 0x47,0x52,28322 },
+    { 0x24,0x83,31550 },
+    { 0x99,0x5e,36080 },
+    { 0x5d,0x52,36210 },
+    { 0x24,0x82,39440 },
+    { 0x57,0x4f,40070 },
+    { 0x3d,0x49,44980 },
+    { 0x97,0x55,49570 },
+    { 0xd7,0x5e,49970 },
+    { 0xbd,0x54,64210 },
+    { 0x0e,0x02,64540 },
+    { 0x80,0x4d,65020 },
+    { 0xdb,0x57,65110 },
+    { 0xb1,0x51,69820 },
+    { 0x66,0x13,75120 },
+    { 0x18,0x04,76490 },
+    { 0x19,0x04,78880 },
+    { 0x57,0x0f,80150 },
+    { 0x31,0x43,81750 },
+    { 0x59,0x0e,86950 },
+    { 0x11,0x02,89640 },
+    { 0x4b,0x0b,91570 },
+    { 0xbd,0x18,108680 },
+    { 0x7a,0x0f,109680 },
+    { 0xa1,0x14,110180 },
+    { 0x4d,0x08,121920 },
+    { 0xdb,0x17,130240 },
+    { 0x00,0x62,133785 },
+    { 0x00,0x5e,133883 },
+    { 0x00,0x5c,134134 },
+    { 0x00,0x61,134346 },
+    { 0x00,0x5f,137608 },
+    { 0x3a,0x05,138910 },
     { 0x00, 0x00, 0 }, /* end of list */
 };
 
@@ -315,7 +294,7 @@ static void SpitfireFreeRec(ScrnInfoPtr pScrn)
     if (!pScrn->driverPrivate)
         return;
     SpitfireUnmapMem(pScrn, 1);
-    xfree(pScrn->driverPrivate);
+    free(pScrn->driverPrivate);
     pScrn->driverPrivate = NULL;
 }
 
@@ -393,7 +372,7 @@ static Bool SpitfireProbe(DriverPtr drv, int flags)
     if ((numDevSections = xf86MatchDevice(SPITFIRE_DRIVER_NAME, &devSections)) <= 0)
                 return FALSE;
     if (xf86GetPciVideoInfo() == NULL) {
-        if (devSections) xfree(devSections);
+        if (devSections) free(devSections);
         return FALSE;
     }
 
@@ -401,7 +380,7 @@ static Bool SpitfireProbe(DriverPtr drv, int flags)
                                     SpitfireChipsets, SpitfirePciChipsets,
                                     devSections, numDevSections, drv,
                                     &usedChips);
-    if (devSections) xfree(devSections);
+    if (devSections) free(devSections);
     devSections = NULL;
     if (numUsed <= 0) return FALSE;
 
@@ -447,11 +426,11 @@ static Bool SpitfireProbe(DriverPtr drv, int flags)
                         pdrv->PciInfo->chipType);
                 }
             }
-            xfree(pEnt);
+            free(pEnt);
         }
     }
 
-    xfree(usedChips);
+    free(usedChips);
     return foundScreen;
 }
 
@@ -715,6 +694,13 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         return FALSE;
     pdrv = DEVPTR(pScrn);
 
+    /* Enable PCI device (for non-boot video device) */
+#ifdef XSERVER_LIBPCIACCESS
+#if HAVE_PCI_DEVICE_ENABLE
+    pci_device_enable(pdrv->PciInfo);
+#endif
+#endif
+
     hwp = VGAHWPTR(pScrn);
     vgaHWGetIOBase(hwp);
     pdrv->vgaIOBase = hwp->IOBase;
@@ -724,7 +710,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if (pScrn->depth == 8)
         pScrn->rgbBits = 8;
 
-    if (!(pdrv->Options = xalloc(sizeof(SpitfireOptions))))
+    if (!(pdrv->Options = calloc(1, sizeof(SpitfireOptions))))
         return FALSE;
     memcpy(pdrv->Options, SpitfireOptions, sizeof(SpitfireOptions));
     xf86ProcessOptions(pScrn->scrnIndex, pScrn->options, pdrv->Options);
@@ -810,7 +796,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     pEnt = xf86GetEntityInfo(pScrn->entityList[0]);
 #ifndef XSERVER_LIBPCIACCESS
     if (pEnt->resources) {
-        xfree(pEnt);
+        free(pEnt);
         SpitfireFreeRec(pScrn);
         return FALSE;
     }
@@ -862,7 +848,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if (pEnt->device->videoRam != 0)
             pScrn->videoRam = pEnt->device->videoRam;
 
-    xfree(pEnt);
+    free(pEnt);
 
 #ifndef XSERVER_LIBPCIACCESS
     pdrv->PciTag = pciTag(pdrv->PciInfo->bus, pdrv->PciInfo->device,
@@ -913,11 +899,11 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
                               vgaHWBlankScreenWeak(),
                           pdrv->vgaIOBase + 0x0A, 0x08, 1, 28322);
         from = X_PROBED;
-        xf86ShowClocks(pScrn, from);
         for (i = 0; i < pScrn->numClocks; i++) {
             if (OTIClockValues[i][2] != 0) pScrn->clock[i] = OTIClockValues[i][2];
             ErrorF("clock[%d] = %d\t0x%02x,0x%02x\n", i, pScrn->clock[i], OTIClockValues[i][0], OTIClockValues[i][1] );
         }
+        xf86ShowClocks(pScrn, from);
     }
 #if 0
     for (i = 0; i <= 0xffff; i+= 32 * 16 ) {
@@ -1714,7 +1700,7 @@ static Bool SpitfireCloseScreen(int scrnIndex, ScreenPtr pScreen)
     }
 
     if( pdrv->DGAModes ) {
-        xfree( pdrv->DGAModes );
+        free( pdrv->DGAModes );
         pdrv->DGAModes = NULL;
         pdrv->numDGAModes = 0;
     }
@@ -1746,7 +1732,7 @@ static int SpitfireInternalScreenInit(int scrnIndex, ScreenPtr pScreen)
 
     TRACE(("SpitfireInternalScreenInit()\n"));
 
-    pScrn = xf86Screens[pScreen->myNum];
+    pScrn = xf86Screens[scrnIndex];
     pdrv = DEVPTR(pScrn);
 
     displayWidth = pScrn->displayWidth;
@@ -1762,7 +1748,7 @@ static int SpitfireInternalScreenInit(int scrnIndex, ScreenPtr pScreen)
   
     if(pdrv->shadowFB) {
         pdrv->ShadowPitch = BitmapBytePad(pScrn->bitsPerPixel * width);
-        pdrv->ShadowPtr = xalloc(pdrv->ShadowPitch * height);
+        pdrv->ShadowPtr = calloc(1, pdrv->ShadowPitch * height);
         displayWidth = pdrv->ShadowPitch / (pScrn->bitsPerPixel >> 3);
         FBStart = pdrv->ShadowPtr;
     } else {
@@ -2009,6 +1995,7 @@ static Bool Spitfire107ClockSelect(ScrnInfoPtr pScrn, int no)
         OTI_OUTB(val, SPITFIRE_CLOCKSEL);
         break;
     }
+    return TRUE;
 }
 static Bool Spitfire111ClockSelect(ScrnInfoPtr pScrn, int no)
 {
@@ -2037,6 +2024,7 @@ static Bool Spitfire111ClockSelect(ScrnInfoPtr pScrn, int no)
         OTI_OUTB(val, SPITFIRE_CLOCKSEL);
         break;
     }
+    return TRUE;
 }
 
 /* This function is used to debug, it prints out the contents of video regs */

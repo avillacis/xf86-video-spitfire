@@ -76,13 +76,13 @@ SpitfireFreeBIOSModeTable( SpitfirePtr pdrv, SpitfireModeTablePtr* ppTable )
     {
 	if( pMode->RefreshRate )
 	{
-	    xfree( pMode->RefreshRate );
+	    free( pMode->RefreshRate );
 	    pMode->RefreshRate = NULL;
 	}
 	pMode++;
     }
 
-    xfree( *ppTable );
+    free( *ppTable );
 }
 
 
@@ -93,7 +93,7 @@ SpitfireGetBIOSModeTable( SpitfirePtr pdrv, int iDepth )
     SpitfireModeTablePtr pTable;
 
     pTable = (SpitfireModeTablePtr) 
-	xcalloc( 1, sizeof(SpitfireModeTableRec) + 
+	calloc( 1, sizeof(SpitfireModeTableRec) + 
 		    (nModes-1) * sizeof(SpitfireModeEntry) );
     if( pTable ) {
 	pTable->NumModes = nModes;
