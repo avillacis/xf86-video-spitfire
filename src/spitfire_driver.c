@@ -28,6 +28,7 @@
 #include "spitfire_driver.h"
 #include "spitfire_accel.h"
 
+#include "oak-clocks.c"
 
 /*#define TRACEON*/
 /*#define DUMP_REGISTERS*/
@@ -599,7 +600,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 {
     EntityInfoPtr pEnt;
     SpitfirePtr pdrv;
-    int i;
+    int i,j;
     vgaHWPtr hwp;
     char *s = NULL;
     MessageType from = X_DEFAULT;
@@ -687,8 +688,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         }
     }
 
-    /* The Spitfire does not have programmable clocks */
-    pScrn->progClock = FALSE;
+    pScrn->progClock = TRUE;
 
     if (!SpitfireGetRec(pScrn))
         return FALSE;
@@ -702,6 +702,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 #endif
 
     hwp = VGAHWPTR(pScrn);
+    vgaHWSetStdFuncs(hwp);
     vgaHWGetIOBase(hwp);
     pdrv->vgaIOBase = hwp->IOBase;
 
@@ -892,6 +893,8 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         }
     } else if (pdrv->Chipset == OAK_64111) {
         pScrn->numClocks = 0;
+        pScrn->progClock = TRUE;
+/*
         while (OTIClockValues[pScrn->numClocks][0] != 0 || OTIClockValues[pScrn->numClocks][1] != 0)
             pScrn->numClocks++;
         xf86GetClocks(pScrn, pScrn->numClocks, Spitfire111ClockSelect,
@@ -904,6 +907,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
             ErrorF("clock[%d] = %d\t0x%02x,0x%02x\n", i, pScrn->clock[i], OTIClockValues[i][0], OTIClockValues[i][1] );
         }
         xf86ShowClocks(pScrn, from);
+*/        
     }
 #if 0
     for (i = 0; i <= 0xffff; i+= 32 * 16 ) {
@@ -1036,12 +1040,23 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     clockRanges->ClockMulFactor = 1.0;
 
     /* Look minimum and maximum discrete clock from previous probing. */
+/*
     for (i = 0; i < pScrn->numClocks; i++) {
         if (pScrn->clock[i] < clockRanges->minClock)
             clockRanges->minClock = pScrn->clock[i];
         if (pScrn->clock[i] > clockRanges->maxClock)
             clockRanges->maxClock = pScrn->clock[i];
     }
+*/
+    for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
+        if (OakClockTable[i][j] != 0) {
+            if (OakClockTable[i][j] < clockRanges->minClock)
+                clockRanges->minClock = OakClockTable[i][j];
+            if (OakClockTable[i][j] > clockRanges->maxClock)
+                clockRanges->maxClock = OakClockTable[i][j];
+        }
+    }
+        
     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
         "Using minClock = %d MHz maxClock = %d MHz\n",
         clockRanges->minClock / 1000, clockRanges->maxClock / 1000);
@@ -1053,7 +1068,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
                           128, 2048, 
                           pScrn->virtualX, pScrn->virtualY,
                           pdrv->videoRambytes, 
-                          LOOKUP_CLOSEST_CLOCK | LOOKUP_CLKDIV2);
+                          LOOKUP_BEST_REFRESH);
 
     if (i == -1) {
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "xf86ValidateModes failure\n");
@@ -1169,7 +1184,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
     SpitfireRegPtr new = &pdrv->ModeReg;
     vgaRegPtr vganew = &hwp->ModeReg;
 
-    TRACE(("SpitfireModeInit(%dx%d, %dHz)\n", 
+    TRACE(("SpitfireModeInit(%dx%d, %dkHz)\n", 
         mode->HDisplay, mode->VDisplay, mode->Clock));
 #ifdef DUMP_REGISTERS
     SpitfirePrintRegs(pScrn);
@@ -1225,16 +1240,28 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         /* Program selected clock index */
         //outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         if (pdrv->Chipset == OAK_64111) {
+            unsigned int i, j, ci = 0, cj = 0;
+        
             new->OR06 = 3;
             new->EX0C = OTIClockValues[2][0];
             new->EX0D = OTIClockValues[2][1];
+/*
             new->EX0E = OTIClockValues[mode->ClockIndex][0];
             new->EX0F = OTIClockValues[mode->ClockIndex][1];
+*/            
+            /* This assumes OakClockTable[0][0] == 0 */
+            for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
+                if (OakClockTable[i][j] <= mode->Clock && OakClockTable[ci][cj] < OakClockTable[i][j]) {
+                    ci = i; cj = j;
+                }
+            }
+            new->EX0E = ci;
+            new->EX0F = cj;
         } else {
             new->OR06 = mode->ClockIndex;
+            TRACE(("SpitfireModeInit: chosen clock index %d\n", mode->ClockIndex));
         }
 
-        TRACE(("SpitfireModeInit: chosen clock index %d\n", mode->ClockIndex));
 
         /* OTI CRT Overflow */
         new->OR30 = (((mode->CrtcVTotal - 2) & 0x400) >> 10) |  /* bit 10 of VTotal to bit 0 */
@@ -1374,8 +1401,8 @@ static Bool SpitfireMapMem(ScrnInfoPtr pScrn)
                        err, strerror(err));
             return FALSE;
         } else {
-ErrorF("MMIO at 0x%08Lx size 0x%04Lx mapped at %p\n",
-pdrv->MmioRegion.base, pdrv->MmioRegion.size, pdrv->MmioRegion.memory);
+            TRACE(("MMIO at 0x%08Lx size 0x%04Lx mapped at %p\n",
+            pdrv->MmioRegion.base, pdrv->MmioRegion.size, pdrv->MmioRegion.memory));
 	}
 
         pdrv->MapBase = pdrv->MmioRegion.memory;
