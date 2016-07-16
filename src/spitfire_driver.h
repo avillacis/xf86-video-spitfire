@@ -196,7 +196,7 @@ typedef struct _Spitfire {
     /* Support for shadowFB and rotation */
     unsigned char *	ShadowPtr;
     int				ShadowPitch;
-    void			(*PointerMoved)(int index, int x, int y);
+    void			(*PointerMoved)(SCRN_ARG_TYPE arg, int x, int y);
 
     /* support for EXA */
     ExaDriverPtr        EXADriverPtr;
@@ -238,8 +238,8 @@ typedef struct _Spitfire {
  
 /* Prototypes */
 
-void SpitfireAdjustFrame(int scrnIndex, int y, int x, int flags);
-Bool SpitfireSwitchMode(int scrnIndex, DisplayModePtr mode, int flags);
+void SpitfireAdjustFrame(ADJUST_FRAME_ARGS_DECL);
+Bool SpitfireSwitchMode(SWITCH_MODE_ARGS_DECL);
 
 /* In spitfire_vbe.c */
 
@@ -257,7 +257,7 @@ unsigned short SpitfireGetBIOSModes(
 
 /* In spitfire_shadow.c */
 
-void SpitfirePointerMoved(int index, int x, int y);
+void SpitfirePointerMoved(SCRN_ARG_TYPE arg, int x, int y);
 void SpitfireRefreshArea(ScrnInfoPtr pScrn, int num, BoxPtr pbox);
 void SpitfireRefreshArea8(ScrnInfoPtr pScrn, int num, BoxPtr pbox);
 void SpitfireRefreshArea16(ScrnInfoPtr pScrn, int num, BoxPtr pbox);

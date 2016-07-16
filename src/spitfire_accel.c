@@ -41,6 +41,7 @@ Bool SpitfireXAAInit(ScreenPtr pScreen);
 
 void SpitfireAccelSync(ScrnInfoPtr pScrn);
 
+#ifdef HAVE_XAA_H
 static void 
 SpitfireSetupForScreenToScreenCopy(
     ScrnInfoPtr pScrn,
@@ -82,11 +83,11 @@ static void SpitfireSubsequentMono8x8PatternFillRect(
 	int patx, int paty,
 	int x, int y, int w, int h
    );
-
+#endif
 
 Bool SpitfireInitAccel(ScreenPtr pScreen)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
 
     pdrv->lDelta = pScrn->virtualX * (pScrn->bitsPerPixel >> 3);
@@ -103,7 +104,8 @@ Bool SpitfireInitAccel(ScreenPtr pScreen)
 
 Bool SpitfireXAAInit(ScreenPtr pScreen)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
+#ifdef HAVE_XAA_H
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
     XAAInfoRecPtr xaaptr;
     BoxRec AvailFBArea;
@@ -194,6 +196,9 @@ Bool SpitfireXAAInit(ScreenPtr pScreen)
 
 
     return XAAInit(pScreen, xaaptr);
+#else
+    return FALSE;
+#endif
 }
 
 #define MAXLOOP			0xffffff
@@ -230,6 +235,7 @@ SpitfireSetupPixMap(
     MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_PIXMAP_FORMAT, pixFormat);
 }
 
+#ifdef HAVE_XAA_H
 static void 
 SpitfireSetupForScreenToScreenCopy(
     ScrnInfoPtr pScrn,
@@ -490,6 +496,7 @@ static void SpitfireSubsequentMono8x8PatternFillRect(
  
     MMIO_OUT32(SPITFIRE_MMIO, SPITFIRE_COMMAND, pdrv->SavedAccelCmd);
 }
+#endif
 
 static Bool
 SpitfirePrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg);
@@ -514,13 +521,13 @@ SpitfireDoneCopy(PixmapPtr pDstPixmap);
 
 static void SpitfireExaSync(ScreenPtr pScreen, int marker)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     SpitfireAccelSync(pScrn);
 }
 
 Bool SpitfireEXAInit(ScreenPtr pScreen)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
 
     if (!(pdrv->EXADriverPtr = exaDriverAlloc())) {
@@ -652,7 +659,7 @@ static void SpitfireSetupPixmap(SpitfirePtr pdrv, PixmapPtr pPixmap, unsigned in
 static Bool
 SpitfirePrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pPixmap->drawable.pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pPixmap->drawable.pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
     unsigned int cmd;
 
@@ -688,7 +695,7 @@ SpitfirePrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg)
 static void
 SpitfireSolid(PixmapPtr pPixmap, int x1, int y1, int x2, int y2)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pPixmap->drawable.pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pPixmap->drawable.pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
     int w = x2 - x1;
     int h = y2 - y1;
@@ -723,7 +730,7 @@ static Bool
 SpitfirePrepareCopy(PixmapPtr pSrcPixmap, PixmapPtr pDstPixmap, int xdir, int ydir,
 					int alu, Pixel planemask)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pSrcPixmap->drawable.pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pSrcPixmap->drawable.pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
     unsigned int cmd;
 
@@ -761,7 +768,7 @@ SpitfirePrepareCopy(PixmapPtr pSrcPixmap, PixmapPtr pDstPixmap, int xdir, int yd
 static void
 SpitfireCopy(PixmapPtr pDstPixmap, int srcX, int srcY, int dstX, int dstY, int width, int height)
 {
-    ScrnInfoPtr pScrn = xf86Screens[pDstPixmap->drawable.pScreen->myNum];
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pDstPixmap->drawable.pScreen);
     SpitfirePtr pdrv = DEVPTR(pScrn);
 
     /* On 24bpp, we are pretending to work at 8bpp, so triple all dimensions */
