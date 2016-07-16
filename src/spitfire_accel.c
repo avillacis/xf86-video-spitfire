@@ -24,18 +24,20 @@
 #include <pciaccess.h>
 #endif
 
-#include "xaa.h"
 #include "exa.h"
 #include <X11/Xarch.h>
-#include "xaalocal.h"
-#include "xaarop.h"
 #include "miline.h"
 
 #include "spitfire_driver.h"
 #include  "spitfire_accel.h"
 
+#ifdef HAVE_XAA_H
+#include "xaalocal.h"
+#endif
+#include "xaarop.h"
+
 Bool SpitfireEXAInit(ScreenPtr pScreen);
-Bool SpitfireXAAINIT(ScreenPtr pScreen);
+Bool SpitfireXAAInit(ScreenPtr pScreen);
 
 void SpitfireAccelSync(ScrnInfoPtr pScrn);
 

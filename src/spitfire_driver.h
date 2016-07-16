@@ -34,7 +34,9 @@
 #include "fboverlay.h"
 #include "xf86cmap.h"
 #include "vbe.h"
+#ifdef HAVE_XAA_H
 #include "xaa.h"
+#endif
 #include "exa.h"
 #include "xf86xv.h"
 
@@ -71,6 +73,8 @@ typedef struct {
 	unsigned char EX0C, EX0D, EX0E, EX0F; /* Clock selection */
 	unsigned char EX30, EX31; /* Hicolor/Truecolor and DAC width */
 } SpitfireRegRec, *SpitfireRegPtr;
+
+#include "compat-api.h"
 
 #define SPITFIRE_INDEX 0x3de
 #define SPITFIRE_DATA  0x3df
@@ -199,7 +203,9 @@ typedef struct _Spitfire {
     Bool		useEXA;
 
     /* Support for XAA acceleration */
+#ifdef HAVE_XAA_H
     XAAInfoRecPtr	AccelInfoRec;
+#endif
     unsigned int	SavedAccelCmd;
 
     SpitfireModeTablePtr	ModeTable;

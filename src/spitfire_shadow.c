@@ -42,9 +42,9 @@ SpitfireRefreshArea(ScrnInfoPtr pScrn, int num, BoxPtr pbox)
 
 
 void
-SpitfirePointerMoved(int index, int x, int y)
+SpitfirePointerMoved(SCRN_ARG_TYPE arg, int x, int y)
 {
-    ScrnInfoPtr pScrn = xf86Screens[index];
+    SCRN_INFO_PTR(arg);
     SpitfirePtr psav = DEVPTR(pScrn);
     int newX, newY;
 
