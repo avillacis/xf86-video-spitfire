@@ -10,6 +10,7 @@
 #include "xf86_OSproc.h"
 #include "compiler.h"
 #include "vgaHW.h"
+#include "xf86PciInfo.h"
 
 #include "fb.h"
 
@@ -27,9 +28,8 @@
 #include "spitfire_driver.h"
 #include "spitfire_accel.h"
 
-#include "oak-clocks.c"
 
-/*#define TRACEON*/
+#define TRACEON
 /*#define DUMP_REGISTERS*/
 
 #ifdef TRACEON
@@ -51,11 +51,6 @@
 #define SPITFIRE_VERSION_CURRENT ((SPITFIRE_VERSION_MAJOR << 24) | \
                              (SPITFIRE_VERSION_MINOR << 16) | SPITFIRE_PATCHLEVEL)
 
-#define PCI_VENDOR_OAK			0x104E
-/* Oak */
-#define PCI_CHIP_OTI107			0x0107
-
-
 /* Prototype section */
 static const OptionInfoRec * SpitfireAvailableOptions(int chipid, int busid);
 static void SpitfireIdentify(int flags);
@@ -75,28 +70,95 @@ static void SpitfireEnableMMIO(ScrnInfoPtr pScrn);
 static void SpitfireDisableMMIO(ScrnInfoPtr pScrn);
 void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
 		       LOCO *colors, VisualPtr pVisual);
-static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL);
-static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL);
+static Bool SpitfireEnterVT(int scrnIndex, int flags);
+static void SpitfireLeaveVT(int scrnIndex, int flags);
 static void SpitfireSave(ScrnInfoPtr pScrn);
 static void SpitfirePrintRegs(ScrnInfoPtr pScrn);
 static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr, SpitfireRegPtr, Bool);
 
-static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL);
-static int SpitfireInternalScreenInit(ScreenPtr pScreen);
+static Bool SpitfireScreenInit(int scrnIndex, ScreenPtr pScreen, int argc,
+                             char **argv);
+static int SpitfireInternalScreenInit(int scrnIndex, ScreenPtr pScreen);
 
 
-static ModeStatus SpitfireValidMode(SCRN_ARG_TYPE arg, DisplayModePtr mode,
+static ModeStatus SpitfireValidMode(int index, DisplayModePtr mode,
                                   Bool verbose, int flags);
 static Bool SpitfireSaveScreen(ScreenPtr pScreen, int mode);
-static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL);
+static Bool SpitfireCloseScreen(int scrnIndex, ScreenPtr pScreen);
 
 static Bool Spitfire107ClockSelect(ScrnInfoPtr pScrn, int no);
+static Bool Spitfire111ClockSelect(ScrnInfoPtr pScrn, int no);
 
 enum OAKCHIPTAGS {
     OAK_UNKNOWN = 0,
     OAK_64107,
     OAK_64111,
     OAK_LAST
+};
+
+/* Values to program the OTI-111 clock chip. Right now I do not have any 
+ * documentation on what the values mean, or how to compute a value given an 
+ * arbitrary target clock rate. The values here are gleaned from the register
+ * values dumped by the driver */
+static unsigned int OTIClockValues[][7] = {
+    { 0x42, 0x53, 25290 }, /* 25.290 */
+    { 0x47, 0x52, 28322 }, /* 28.322 */
+    { 0x80, 0x4d, 65330 }, /* 65.220 */
+    { 0x18, 0x04, 76500 }, /* 76.460 */
+    { 0x31, 0x43, 81610 },
+    { 0x00, 0x5c, 131545 }, /* 131.515 */
+
+    {0, 0, 0},
+
+    { 0x42, 0x53, 0 }, /* 25.290 */
+    { 0x47, 0x52, 0 }, /* 28.322 */
+    { 0x80, 0x4d, 0 }, /* 65.220 */
+    { 0x18, 0x04, 0 }, /* 76.460 */
+    { 0x31, 0x43, 0 },
+    { 0x00, 0x5c, 0 }, /* 131.515 */
+
+
+    { 0x55, 0x33, 0 }, /* 25.140 */
+    { 0x4f, 0x31, 0 }, /* 26.150 */
+    { 0x99, 0x5e, 0 }, /* 36.050 */
+
+    { 0x5d, 0x52, 0 }, /* 36.260 */
+
+    { 0x3d, 0x49, 0 }, /* 45.420 */
+    { 0xbd, 0x54, 0 }, /* 63.980 */
+    { 0x0e, 0x02, 0 }, /* 64.840  */
+    { 0xb1, 0x51, 0 }, /* 69.970 */
+
+    { 0x59, 0x0e, 0 }, /* 83.370 */
+    { 0x11, 0x02, 0 }, /* 89.880 */
+    { 0x4b, 0x0b, 0 }, /* 91.900 */
+    { 0x7a, 0x0f, 0 }, /* 109.970  */
+    { 0x4d, 0x08, 0 }, /* 121.620 */
+    { 0x00, 0x5c, /* 131545 */ 0 }, /* 131.515 */
+    { 0x00, 0x5e, 0 }, /* 135.470 */
+    { 0x00, 0x5f, 0 }, /* 135.200 */
+    { 0x00, 0x61, 0 }, /* 135.140 */
+    { 0x00, 0x62, 0 }, /* 135.590 */
+
+    { 0xbd, 0x18, 0 },
+    { 0x24, 0x82, 0 },
+    { 0xa8, 0x97, 0 },
+
+    { 0x24, 0x83, 0 },
+    { 0x57, 0x4f, 0 },
+    { 0xd7, 0x5e, 0 },
+    { 0x97, 0x55, 0 },
+
+    { 0xdb, 0x57, 0 },
+    { 0x66, 0x13, 0 },
+    { 0x19, 0x04, 0 },
+    { 0x57, 0x0f, 0 },
+    { 0xa1, 0x14, 0 },
+    { 0xdb, 0x17, 0 },
+    { 0x3a, 0x05, 0 },
+
+
+    { 0x00, 0x00, 0 }, /* end of list */
 };
 
 /* Supported chipsets */
@@ -158,6 +220,7 @@ static const OptionInfoRec SpitfireOptions[] =
     { OPTION_SHADOW_FB,        "ShadowFB",        OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_USEBIOS,        "UseBIOS",        OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_ROTATE,        "Rotate",        OPTV_ANYSTR, {0}, FALSE },
+    { OPTION_FORCE_INIT,   "ForceInit",   OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_IGNORE_EDID,  "IgnoreEDID",  OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_NOACCEL,        "NoAccel",        OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_ACCELMETHOD, "AccelMethod", OPTV_STRING,        {0}, FALSE },
@@ -428,8 +491,9 @@ SpitfireDDC1Read(ScrnInfoPtr pScrn)
 }
 
 static Bool
-SpitfireDDC1(ScrnInfoPtr pScrn)
+SpitfireDDC1(int scrnIndex)
 {
+    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
     SpitfirePtr pdrv = DEVPTR(pScrn);
     unsigned char byte;
     xf86MonPtr pMon;
@@ -437,7 +501,7 @@ SpitfireDDC1(ScrnInfoPtr pScrn)
     InI2CREG(byte, pdrv->I2CPort);
     OutI2CREG(byte | 0x02, pdrv->I2CPort);
 
-    pMon=xf86DoEDID_DDC1(XF86_SCRN_ARG(pScrn),vgaHWddc1SetSpeedWeak(),SpitfireDDC1Read);
+    pMon=xf86DoEDID_DDC1(scrnIndex,vgaHWddc1SetSpeedWeak(),SpitfireDDC1Read);
     if (!pMon)
         return FALSE;
     
@@ -509,7 +573,7 @@ static void SpitfireDoDDC(ScrnInfoPtr pScrn)
     if (ddc) {
         pdrv->I2CPort = 0x0c;
         ErrorF("Trying reading EDID with DDC1...\n");
-        if (!SpitfireDDC1(pScrn)) {
+        if (!SpitfireDDC1(pScrn->scrnIndex)) {
             /* DDC1 failed,switch to DDC2 */
             if (xf86LoadSubModule(pScrn, "i2c")) {
                 ErrorF("Trying reading EDID with DDC2...\n");
@@ -519,7 +583,7 @@ static void SpitfireDoDDC(ScrnInfoPtr pScrn)
                     
                     InI2CREG(tmp, pdrv->I2CPort);
                     OutI2CREG(tmp | 0x03, pdrv->I2CPort);
-                    pMon = xf86PrintEDID(xf86DoEDID_DDC2(XF86_SCRN_ARG(pScrn),pdrv->I2C));
+                    pMon = xf86PrintEDID(xf86DoEDID_DDC2(pScrn->scrnIndex,pdrv->I2C));
                     if (!pdrv->IgnoreEDID) xf86SetDDCproperties(pScrn, pMon);
                     OutI2CREG(tmp, pdrv->I2CPort);
                 }
@@ -551,9 +615,9 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 {
     EntityInfoPtr pEnt;
     SpitfirePtr pdrv;
-    int i,j;
+    int i;
     vgaHWPtr hwp;
-    const char *s = NULL;
+    char *s = NULL;
     MessageType from = X_DEFAULT;
     ClockRangePtr clockRanges;
 
@@ -639,21 +703,14 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         }
     }
 
-    pScrn->progClock = TRUE;
+    /* The Spitfire does not have programmable clocks */
+    pScrn->progClock = FALSE;
 
     if (!SpitfireGetRec(pScrn))
         return FALSE;
     pdrv = DEVPTR(pScrn);
 
-    /* Enable PCI device (for non-boot video device) */
-#ifdef XSERVER_LIBPCIACCESS
-#if HAVE_PCI_DEVICE_ENABLE
-    pci_device_enable(pdrv->PciInfo);
-#endif
-#endif
-
     hwp = VGAHWPTR(pScrn);
-    vgaHWSetStdFuncs(hwp);
     vgaHWGetIOBase(hwp);
     pdrv->vgaIOBase = hwp->IOBase;
 
@@ -715,7 +772,6 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if(!pdrv->NoAccel) {
         from = X_DEFAULT;
         char *strptr;
-#ifdef HAVE_XAA_H
         if((strptr = (char *)xf86GetOptValString(pdrv->Options, OPTION_ACCELMETHOD))) {
             if(!xf86NameCmp(strptr,"XAA")) {
                 from = X_CONFIG;
@@ -725,19 +781,21 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
                pdrv->useEXA = TRUE;
             }
        }
-#else
-       pdrv->useEXA = TRUE;
-#endif
        xf86DrvMsg(pScrn->scrnIndex, from, "Using %s acceleration architecture\n",
                 pdrv->useEXA ? "EXA" : "XAA");
     }
 
     from = X_DEFAULT;
-    pdrv->UseBIOS = FALSE;
+    pdrv->UseBIOS = TRUE;
     if (xf86GetOptValBool(pdrv->Options, OPTION_USEBIOS, &pdrv->UseBIOS) )
         from = X_CONFIG;
     xf86DrvMsg(pScrn->scrnIndex, from, "%ssing video BIOS to set modes\n",
         pdrv->UseBIOS ? "U" : "Not u" );
+
+    pdrv->ForceInit = 0;
+    if( xf86GetOptValBool( pdrv->Options, OPTION_FORCE_INIT, &pdrv->ForceInit))
+        xf86DrvMsg( pScrn->scrnIndex, X_CONFIG,
+                    "Option: ForceInit enabled\n" );
 
     if (pScrn->numEntities > 1) {
         SpitfireFreeRec(pScrn);
@@ -842,9 +900,68 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
             ErrorF("clock[%d] = %d\n", i, pScrn->clock[i]);
         }
     } else if (pdrv->Chipset == OAK_64111) {
+        int j;
+
         pScrn->numClocks = 0;
-        pScrn->progClock = TRUE;
+        while (OTIClockValues[pScrn->numClocks][0] != 0 || OTIClockValues[pScrn->numClocks][1] != 0) {
+            for (i = 3; i < 7; i++) OTIClockValues[pScrn->numClocks][i] = OTIClockValues[pScrn->numClocks][2];
+            pScrn->numClocks++;
+        }
+
+        xf86GetClocks(pScrn, pScrn->numClocks, Spitfire111ClockSelect,
+                              vgaHWProtectWeak(),
+                              vgaHWBlankScreenWeak(),
+                          pdrv->vgaIOBase + 0x0A, 0x08, 1, 28322);
+        from = X_PROBED;
+        xf86ShowClocks(pScrn, from);
+        for (i = 0; i < pScrn->numClocks; i++) {
+            if (OTIClockValues[i][2] != 0) pScrn->clock[i] = OTIClockValues[i][2];
+            ErrorF("clock[%d] = %d\t0x%02x,0x%02x\n", i, pScrn->clock[i], OTIClockValues[i][0], OTIClockValues[i][1] );
+        }
+
+/*
+        from = X_PROBED;
+        for (i = 0; i < 5; i++) {
+            xf86GetClocks(pScrn, pScrn->numClocks, Spitfire111ClockSelect,
+                                  vgaHWProtectWeak(),
+                                  vgaHWBlankScreenWeak(),
+                              pdrv->vgaIOBase + 0x0A, 0x08, 1, 28322);
+            xf86ShowClocks(pScrn, from);
+            for (j = 0; j < pScrn->numClocks; j++) {
+                if (OTIClockValues[j][2] != 0)
+                    pScrn->clock[j] = OTIClockValues[j][2];
+                else OTIClockValues[j][i + 2] = pScrn->clock[j];
+            }
+        }
+        for (i = 0; i < pScrn->numClocks; i++) {
+            pScrn->clock[i] = (OTIClockValues[i][2] + OTIClockValues[i][3] + OTIClockValues[i][4] + OTIClockValues[i][5] + OTIClockValues[i][6]) / 5;
+            ErrorF("clock[%d] = %d\t0x%02x,0x%02x\n", i, pScrn->clock[i], OTIClockValues[i][0], OTIClockValues[i][1] );
+        }
+        xf86ShowClocks(pScrn, from);
+*/
     }
+#if 0
+    for (i = 0; i <= 0xffff; i+= 32 * 16 ) {
+	int j;
+
+	for (j = 0; j < 32; j++) {
+	    OTIClockValues[8 + j][1] = (i + j * 16) & 0xff;
+	    OTIClockValues[8 + j][0] = ((i + j * 16) >> 8) & 0xff;
+	    OTIClockValues[8 + j][2] = 0;
+	}
+	xf86GetClocks(pScrn, pScrn->numClocks, SpitfireClockSelect,
+                          vgaHWProtectWeak(),
+                          vgaHWBlankScreenWeak(),
+                      pdrv->vgaIOBase + 0x0A, 0x08, 1, 28322);
+	from = X_PROBED;
+	xf86ShowClocks(pScrn, from);
+    	for (j = 8; j < pScrn->numClocks; j++) {
+            ErrorF("0x%02x,0x%02x\t%d\n", OTIClockValues[j][0], OTIClockValues[j][1] , pScrn->clock[j]);
+	}
+
+    }
+    pScrn->numClocks = 8;
+#endif
 
     /* Next go on to detect amount of installed ram */
     if (!pScrn->videoRam) {
@@ -954,15 +1071,12 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     clockRanges->ClockMulFactor = 1.0;
 
     /* Look minimum and maximum discrete clock from previous probing. */
-    for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
-        if (OakClockTable[i][j] != 0) {
-            if (OakClockTable[i][j] < clockRanges->minClock)
-                clockRanges->minClock = OakClockTable[i][j];
-            if (OakClockTable[i][j] > clockRanges->maxClock)
-                clockRanges->maxClock = OakClockTable[i][j];
-        }
+    for (i = 0; i < pScrn->numClocks; i++) {
+        if (pScrn->clock[i] < clockRanges->minClock)
+            clockRanges->minClock = pScrn->clock[i];
+        if (pScrn->clock[i] > clockRanges->maxClock)
+            clockRanges->maxClock = pScrn->clock[i];
     }
-        
     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
         "Using minClock = %d MHz maxClock = %d MHz\n",
         clockRanges->minClock / 1000, clockRanges->maxClock / 1000);
@@ -974,7 +1088,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
                           128, 2048, 
                           pScrn->virtualX, pScrn->virtualY,
                           pdrv->videoRambytes, 
-                          LOOKUP_BEST_REFRESH);
+                          LOOKUP_CLOSEST_CLOCK | LOOKUP_CLKDIV2);
 
     if (i == -1) {
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "xf86ValidateModes failure\n");
@@ -1064,10 +1178,10 @@ static int SpitfireGetRefresh(DisplayModePtr mode)
     return refresh;
 }
 
-static ModeStatus SpitfireValidMode(SCRN_ARG_TYPE arg, DisplayModePtr pMode,
+static ModeStatus SpitfireValidMode(int index, DisplayModePtr pMode,
                                   Bool verbose, int flags)
 {
-    SCRN_INFO_PTR(arg);
+    ScrnInfoPtr pScrn = xf86Screens[index];
     SpitfirePtr pdrv = DEVPTR(pScrn);
     int refresh;
 
@@ -1090,7 +1204,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
     SpitfireRegPtr new = &pdrv->ModeReg;
     vgaRegPtr vganew = &hwp->ModeReg;
 
-    TRACE(("SpitfireModeInit(%dx%d, %dkHz)\n", 
+    TRACE(("SpitfireModeInit(%dx%d, %dHz)\n", 
         mode->HDisplay, mode->VDisplay, mode->Clock));
 #ifdef DUMP_REGISTERS
     SpitfirePrintRegs(pScrn);
@@ -1146,27 +1260,16 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         /* Program selected clock index */
         //outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         if (pdrv->Chipset == OAK_64111) {
-            unsigned int i, j, ci = 0, cj = 0;
-
-            /* Legacy values, currently unused */
-            new->EX0C = 0x4f;
-            new->EX0D = 0x31;
-        
-            new->OR06 = 3; /* Choose clock set 3 at EX0E,EX0F */
-
-            /* This assumes OakClockTable[0][0] == 0 */
-            for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
-                if (OakClockTable[i][j] <= mode->Clock && OakClockTable[ci][cj] < OakClockTable[i][j]) {
-                    ci = i; cj = j;
-                }
-            }
-            new->EX0E = ci;
-            new->EX0F = cj;
+            new->OR06 = 3;
+            new->EX0C = OTIClockValues[2][0];
+            new->EX0D = OTIClockValues[2][1];
+            new->EX0E = OTIClockValues[mode->ClockIndex][0];
+            new->EX0F = OTIClockValues[mode->ClockIndex][1];
         } else {
             new->OR06 = mode->ClockIndex;
-            TRACE(("SpitfireModeInit: chosen clock index %d\n", mode->ClockIndex));
         }
 
+        TRACE(("SpitfireModeInit: chosen clock index %d\n", mode->ClockIndex));
 
         /* OTI CRT Overflow */
         new->OR30 = (((mode->CrtcVTotal - 2) & 0x400) >> 10) |  /* bit 10 of VTotal to bit 0 */
@@ -1227,7 +1330,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
 
     /* do it! */
     SpitfireWriteMode(pScrn, vganew, new, TRUE);
-    SpitfireAdjustFrame(ADJUST_FRAME_ARGS(pScrn, pScrn->frameX0, pScrn->frameY0));
+    SpitfireAdjustFrame(pScrn->scrnIndex, pScrn->frameX0, pScrn->frameY0, 0);
 #ifdef DUMP_REGISTERS
     SpitfirePrintRegs(pScrn);
 #endif
@@ -1306,8 +1409,8 @@ static Bool SpitfireMapMem(ScrnInfoPtr pScrn)
                        err, strerror(err));
             return FALSE;
         } else {
-            TRACE(("MMIO at 0x%08Lx size 0x%04Lx mapped at %p\n",
-            pdrv->MmioRegion.base, pdrv->MmioRegion.size, pdrv->MmioRegion.memory));
+ErrorF("MMIO at 0x%08Lx size 0x%04Lx mapped at %p\n",
+pdrv->MmioRegion.base, pdrv->MmioRegion.size, pdrv->MmioRegion.memory);
 	}
 
         pdrv->MapBase = pdrv->MmioRegion.memory;
@@ -1480,9 +1583,10 @@ static void SpitfireDPMS(ScrnInfoPtr pScrn, int mode, int flags)
     OTI_OUTB(val, SPITFIRE_DPMS);
 }
 
-static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
+static Bool SpitfireScreenInit(int scrnIndex, ScreenPtr pScreen, int argc,
+                             char **argv)
 {
-    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
     SpitfirePtr pdrv = DEVPTR(pScrn);
     EntityInfoPtr pEnt;
     int ret;
@@ -1520,10 +1624,9 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
         return FALSE;
 
     if (!miSetPixmapDepths ()) return FALSE;
-    if (!SpitfireInternalScreenInit(pScreen)) return FALSE;
+    if (!SpitfireInternalScreenInit(scrnIndex, pScreen)) return FALSE;
 
     xf86SetBlackWhitePixels(pScreen);
-
     {
         VisualPtr visual;
         visual = pScreen->visuals + pScreen->numVisuals;
@@ -1557,17 +1660,20 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
             }
         }
     }
-
+TRACE(("fbPictureInit(pScreen)\n"));
     /* must be after RGB ordering fixed */
     fbPictureInit (pScreen, 0, 0);
 
     if( !pdrv->NoAccel ) {
+TRACE(("SpitfireInitAccel(pScreen)\n"));
         SpitfireInitAccel(pScreen);
+TRACE(("SpitfireInitAccel(pScreen)\n"));
     }
-
-    /*miInitializeBackingStore(pScreen);*/
+TRACE(("miInitializeBackingStore(pScreen)\n"));
+    miInitializeBackingStore(pScreen);
+TRACE(("xf86SetBackingStore(pScreen)\n"));
     xf86SetBackingStore(pScreen);
-
+TRACE(("miDCInitialize(pScreen)\n"));
     miDCInitialize(pScreen, xf86GetPointerScreenFuncs());
 
     if (pdrv->shadowFB) {
@@ -1588,6 +1694,7 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
         }
         ShadowFBInit(pScreen, refreshArea);
     }
+TRACE(("miCreateDefColormap(pScreen)\n"));
     if (!miCreateDefColormap(pScreen)) return FALSE;
     colormapFlags =  CMAP_RELOAD_ON_MODE_SWITCH | CMAP_PALETTED_TRUECOLOR;
 
@@ -1610,9 +1717,9 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
     return TRUE;
 }
 
-static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL)
+static Bool SpitfireCloseScreen(int scrnIndex, ScreenPtr pScreen)
 {
-    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
     vgaHWPtr hwp = VGAHWPTR(pScrn);
     SpitfirePtr pdrv = DEVPTR(pScrn);
     vgaRegPtr vgaSavePtr = &hwp->SavedReg;
@@ -1625,12 +1732,10 @@ static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL)
         pdrv->EXADriverPtr = NULL;
     }
 
-#ifdef HAVE_XAA_H
     if( pdrv->AccelInfoRec ) {
         XAADestroyInfoRec( pdrv->AccelInfoRec );
         pdrv->AccelInfoRec = NULL;
     }
-#endif
 
     if( pdrv->DGAModes ) {
         free( pdrv->DGAModes );
@@ -1651,11 +1756,11 @@ static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL)
     pScrn->vtSema = FALSE;
     pScreen->CloseScreen = pdrv->CloseScreen;
 
-    return (*pScreen->CloseScreen)(CLOSE_SCREEN_ARGS);
+    return (*pScreen->CloseScreen)(scrnIndex, pScreen);
 }
 
 
-static int SpitfireInternalScreenInit(ScreenPtr pScreen)
+static int SpitfireInternalScreenInit(int scrnIndex, ScreenPtr pScreen)
 {
     int ret = TRUE;
     ScrnInfoPtr pScrn;
@@ -1665,7 +1770,7 @@ static int SpitfireInternalScreenInit(ScreenPtr pScreen)
 
     TRACE(("SpitfireInternalScreenInit()\n"));
 
-    pScrn = xf86ScreenToScrn(pScreen);
+    pScrn = xf86Screens[scrnIndex];
     pdrv = DEVPTR(pScrn);
 
     displayWidth = pScrn->displayWidth;
@@ -1698,9 +1803,9 @@ static int SpitfireInternalScreenInit(ScreenPtr pScreen)
 }
 
 
-static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL)
+static Bool SpitfireEnterVT(int scrnIndex, int flags)
 {
-    SCRN_INFO_PTR(arg);
+    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
 
     TRACE(("SpitfireEnterVT(%d)\n", flags));
 
@@ -1712,9 +1817,9 @@ static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL)
     return FALSE;
 }
 
-static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL)
+static void SpitfireLeaveVT(int scrnIndex, int flags)
 {
-    SCRN_INFO_PTR(arg);
+    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
     vgaHWPtr hwp = VGAHWPTR(pScrn);
     SpitfirePtr pdrv = DEVPTR(pScrn);
     vgaRegPtr vgaSavePtr = &hwp->SavedReg;
@@ -1872,7 +1977,7 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
 
 static Bool SpitfireSaveScreen(ScreenPtr pScreen, int mode)
 {
-    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+    ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
 
     TRACE(("SpitfireSaveScreen(0x%x)\n", mode));
 
@@ -1885,9 +1990,9 @@ static Bool SpitfireSaveScreen(ScreenPtr pScreen, int mode)
  *
  * Adjust driver variables for a new framebuffer size.
  */
-void SpitfireAdjustFrame(ADJUST_FRAME_ARGS_DECL)
+void SpitfireAdjustFrame(int scrnIndex, int x, int y, int flags)
 {
-    SCRN_INFO_PTR(arg);
+    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
     SpitfirePtr pdrv = DEVPTR(pScrn);
     unsigned int pixelStart;
     unsigned int byteStart;
@@ -1926,6 +2031,49 @@ static Bool Spitfire107ClockSelect(ScrnInfoPtr pScrn, int no)
         outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         val = (inb(SPITFIRE_DATA) & 0xf0) | (no & 0x03);
         OTI_OUTB(val, SPITFIRE_CLOCKSEL);
+        break;
+    }
+    return TRUE;
+}
+static Bool Spitfire111ClockSelect(ScrnInfoPtr pScrn, int no)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    unsigned char val;
+
+    switch (no) {
+    case CLK_REG_SAVE:
+        EX_INB(pdrv->saveClockReg[0], 0x0e);
+        EX_INB(pdrv->saveClockReg[1], 0x0f);
+        outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
+        pdrv->saveClock = inb(SPITFIRE_DATA) & 0x0f;
+        break;
+    case CLK_REG_RESTORE:
+        /* Sequencer reset */
+        outw(0x3c4, 0x0100);
+
+        EX_OUTB(pdrv->saveClockReg[0], 0x0e);
+        EX_OUTB(pdrv->saveClockReg[1], 0x0f);
+        outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
+        val = (inb(SPITFIRE_DATA) & 0xf0) | (pdrv->saveClock & 0x0f);
+        OTI_OUTB(val, SPITFIRE_CLOCKSEL);
+
+        /* Sequencer reset */
+        outw(0x3c4, 0x0300);
+
+        break;
+    default:
+        /* Sequencer reset */
+        outw(0x3c4, 0x0100);
+
+        EX_OUTB(OTIClockValues[no][0], 0x0e);
+        EX_OUTB(OTIClockValues[no][1], 0x0f);
+        outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
+        val = (inb(SPITFIRE_DATA) & 0xf0) | 3; /* Test all values on clock 3 */
+        OTI_OUTB(val, SPITFIRE_CLOCKSEL);
+
+        /* Sequencer reset */
+        outw(0x3c4, 0x0300);
+
         break;
     }
     return TRUE;
@@ -2030,14 +2178,14 @@ static void SpitfirePrintRegs(ScrnInfoPtr pScrn)
     ErrorF("\n\n");
 }
 
-Bool SpitfireSwitchMode(SWITCH_MODE_ARGS_DECL)
+Bool SpitfireSwitchMode(int scrnIndex, DisplayModePtr mode, int flags)
 {
-    SCRN_INFO_PTR(arg);
+    ScrnInfoPtr    pScrn      = xf86Screens[scrnIndex];
     SpitfirePtr pdrv = DEVPTR(pScrn);
     Bool success;
 
     TRACE(("SpitfireSwitchMode\n"));
-    success = SpitfireModeInit(pScrn, mode);
+    success = SpitfireModeInit(xf86Screens[scrnIndex], mode);
 
     return success;
 }

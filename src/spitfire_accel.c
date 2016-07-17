@@ -10,7 +10,6 @@
 #include "xf86_OSproc.h"
 #include "compiler.h"
 #include "vgaHW.h"
-#include "xf86PciInfo.h"
 
 #include "fb.h"
 

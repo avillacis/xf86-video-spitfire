@@ -25,7 +25,6 @@
 #include "xf86Resources.h"
 #endif
 #include "xf86Pci.h"
-#include "xf86PciInfo.h"
 #include "xf86_OSproc.h"
 #include "xf86Cursor.h"
 #include "mipointer.h"
