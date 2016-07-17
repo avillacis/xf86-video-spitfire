@@ -27,8 +27,6 @@
 #include "spitfire_driver.h"
 #include "spitfire_accel.h"
 
-#include "oak-clocks.c"
-
 /*#define TRACEON*/
 /*#define DUMP_REGISTERS*/
 
@@ -75,6 +73,10 @@ static void SpitfireEnableMMIO(ScrnInfoPtr pScrn);
 static void SpitfireDisableMMIO(ScrnInfoPtr pScrn);
 void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
 		       LOCO *colors, VisualPtr pVisual);
+static void SpitfireCalcClock(long freq, int min_m, int min_n1, int max_n1,
+			   int min_n2, int max_n2, long freq_min,
+			   long freq_max, unsigned int *mdiv,
+			   unsigned int *ndiv, unsigned int *r);
 static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL);
 static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL);
 static void SpitfireSave(ScrnInfoPtr pScrn);
@@ -954,14 +956,8 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     clockRanges->ClockMulFactor = 1.0;
 
     /* Look minimum and maximum discrete clock from previous probing. */
-    for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
-        if (OakClockTable[i][j] != 0) {
-            if (OakClockTable[i][j] < clockRanges->minClock)
-                clockRanges->minClock = OakClockTable[i][j];
-            if (OakClockTable[i][j] > clockRanges->maxClock)
-                clockRanges->maxClock = OakClockTable[i][j];
-        }
-    }
+    clockRanges->minClock = 12210;
+    clockRanges->maxClock = 135000;
         
     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
         "Using minClock = %d MHz maxClock = %d MHz\n",
@@ -1146,7 +1142,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         /* Program selected clock index */
         //outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         if (pdrv->Chipset == OAK_64111) {
-            unsigned int i, j, ci = 0, cj = 0;
+            unsigned int m, n, r;
 
             /* Legacy values, currently unused */
             new->EX0C = 0x4f;
@@ -1154,14 +1150,10 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         
             new->OR06 = 3; /* Choose clock set 3 at EX0E,EX0F */
 
-            /* This assumes OakClockTable[0][0] == 0 */
-            for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
-                if (OakClockTable[i][j] <= mode->Clock && OakClockTable[ci][cj] < OakClockTable[i][j]) {
-                    ci = i; cj = j;
-                }
-            }
-            new->EX0E = ci;
-            new->EX0F = cj;
+            SpitfireCalcClock(mode->Clock, 8, 1, 63, 0, 3, 12210, 135000, &m, &n, &r);
+
+            new->EX0E = m;
+            new->EX0F = ((r << 6) & 0xc0) | (n & 0x3f);
         } else {
             new->OR06 = mode->ClockIndex;
             TRACE(("SpitfireModeInit: chosen clock index %d\n", mode->ClockIndex));
@@ -1449,6 +1441,59 @@ void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
         outb(0x3c9, colors[index].blue);
         if (index == pScrn->colorKey) updateKey = index;
     }
+}
+
+#define BASE_FREQ			14.31818
+static void SpitfireCalcClock(long freq, int min_m, int min_n1, int max_n1,
+			   int min_n2, int max_n2, long freq_min,
+			   long freq_max, unsigned int *mdiv,
+			   unsigned int *ndiv, unsigned int *r)
+{
+    double ffreq, ffreq_min, ffreq_max;
+    double div, diff, best_diff;
+    unsigned int m;
+    unsigned char n1, n2, best_n1=16, best_n2=0, best_m=0x47;
+
+    ffreq = freq / 1000.0 / BASE_FREQ;
+    ffreq_max = freq_max / 1000.0 / BASE_FREQ;
+    ffreq_min = freq_min / 1000.0 / BASE_FREQ;
+
+    if (ffreq < ffreq_min / (1 << max_n2)) {
+	    ErrorF("invalid frequency %1.3f Mhz\n",
+		   ffreq*BASE_FREQ);
+	    ffreq = ffreq_min / (1 << max_n2);
+    }
+    if (ffreq > ffreq_max / (1 << min_n2)) {
+	    ErrorF("invalid frequency %1.3f Mhz\n",
+		   ffreq*BASE_FREQ);
+	    ffreq = ffreq_max / (1 << min_n2);
+    }
+
+    /* work out suitable timings */
+
+    best_diff = ffreq;
+
+    for (n2=min_n2; n2<=max_n2; n2++) {
+        for (n1=min_n1; n1<=max_n1; n1++) {
+            m = (int)(ffreq * n1 * (1 << n2) + 0.5);
+            if (m < min_m || m > 255) continue;
+            div = (double)(m) / (double)(n1);
+            if ((div >= ffreq_min) && (div <= ffreq_max)) {
+                diff = ffreq - div / (1 << n2);
+                if (diff < 0.0) diff = -diff;
+                if (diff < best_diff) {
+                    best_diff = diff;
+                    best_m = m;
+                    best_n1 = n1;
+                    best_n2 = n2;
+                }
+            }
+        }
+    }
+
+    *ndiv = best_n1;
+    *r = best_n2;
+    *mdiv = best_m;
 }
 
 static void SpitfireDPMS(ScrnInfoPtr pScrn, int mode, int flags)
