@@ -56,7 +56,7 @@ SpitfirePointerMoved(SCRN_ARG_TYPE arg, int x, int y)
 	newY = pScrn->pScreen->width - x - 1;
     }
 
-    (*psav->PointerMoved)(index, newX, newY);
+    (*psav->PointerMoved)(arg, newX, newY);
 }
 
 void
