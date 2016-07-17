@@ -779,7 +779,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     }
 
     from = X_DEFAULT;
-    pdrv->UseBIOS = TRUE;
+    pdrv->UseBIOS = FALSE;
     if (xf86GetOptValBool(pdrv->Options, OPTION_USEBIOS, &pdrv->UseBIOS) )
         from = X_CONFIG;
     xf86DrvMsg(pScrn->scrnIndex, from, "%ssing video BIOS to set modes\n",
