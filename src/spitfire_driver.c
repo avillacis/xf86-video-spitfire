@@ -204,7 +204,6 @@ static const OptionInfoRec SpitfireOptions[] =
     { OPTION_SHADOW_FB,        "ShadowFB",        OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_USEBIOS,        "UseBIOS",        OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_ROTATE,        "Rotate",        OPTV_ANYSTR, {0}, FALSE },
-    { OPTION_FORCE_INIT,   "ForceInit",   OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_IGNORE_EDID,  "IgnoreEDID",  OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_NOACCEL,        "NoAccel",        OPTV_BOOLEAN, {0}, FALSE },
     { OPTION_ACCELMETHOD, "AccelMethod", OPTV_STRING,        {0}, FALSE },
@@ -785,11 +784,6 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         from = X_CONFIG;
     xf86DrvMsg(pScrn->scrnIndex, from, "%ssing video BIOS to set modes\n",
         pdrv->UseBIOS ? "U" : "Not u" );
-
-    pdrv->ForceInit = 0;
-    if( xf86GetOptValBool( pdrv->Options, OPTION_FORCE_INIT, &pdrv->ForceInit))
-        xf86DrvMsg( pScrn->scrnIndex, X_CONFIG,
-                    "Option: ForceInit enabled\n" );
 
     if (pScrn->numEntities > 1) {
         SpitfireFreeRec(pScrn);
