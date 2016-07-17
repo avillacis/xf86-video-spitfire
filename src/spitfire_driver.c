@@ -87,62 +87,12 @@ static Bool SpitfireSaveScreen(ScreenPtr pScreen, int mode);
 static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL);
 
 static Bool Spitfire107ClockSelect(ScrnInfoPtr pScrn, int no);
-static Bool Spitfire111ClockSelect(ScrnInfoPtr pScrn, int no);
 
 enum OAKCHIPTAGS {
     OAK_UNKNOWN = 0,
     OAK_64107,
     OAK_64111,
     OAK_LAST
-};
-
-/* Values to program the OTI-111 clock chip. Right now I do not have any 
- * documentation on what the values mean, or how to compute a value given an 
- * arbitrary target clock rate. The values here are gleaned from the register
- * values dumped by the driver */
-static unsigned int OTIClockValues[][7] = {
-    { 0x42,0x53,25270 },
-    { 0x47,0x52,28322 },
-
-
-    { 0x4f,0x31,24460 },
-    { 0x55,0x33,25160 },
-    { 0xa8,0x97,25240 },
-    { 0x42,0x53,25270 },
-    { 0x47,0x52,28322 },
-    { 0x24,0x83,31550 },
-    { 0x99,0x5e,36080 },
-    { 0x5d,0x52,36210 },
-    { 0x24,0x82,39440 },
-    { 0x57,0x4f,40070 },
-    { 0x3d,0x49,44980 },
-    { 0x97,0x55,49570 },
-    { 0xd7,0x5e,49970 },
-    { 0xbd,0x54,64210 },
-    { 0x0e,0x02,64540 },
-    { 0x80,0x4d,65020 },
-    { 0xdb,0x57,65110 },
-    { 0xb1,0x51,69820 },
-    { 0x66,0x13,75120 },
-    { 0x18,0x04,76490 },
-    { 0x19,0x04,78880 },
-    { 0x57,0x0f,80150 },
-    { 0x31,0x43,81750 },
-    { 0x59,0x0e,86950 },
-    { 0x11,0x02,89640 },
-    { 0x4b,0x0b,91570 },
-    { 0xbd,0x18,108680 },
-    { 0x7a,0x0f,109680 },
-    { 0xa1,0x14,110180 },
-    { 0x4d,0x08,121920 },
-    { 0xdb,0x17,130240 },
-    { 0x00,0x62,133785 },
-    { 0x00,0x5e,133883 },
-    { 0x00,0x5c,134134 },
-    { 0x00,0x61,134346 },
-    { 0x00,0x5f,137608 },
-    { 0x3a,0x05,138910 },
-    { 0x00, 0x00, 0 }, /* end of list */
 };
 
 /* Supported chipsets */
@@ -890,43 +840,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     } else if (pdrv->Chipset == OAK_64111) {
         pScrn->numClocks = 0;
         pScrn->progClock = TRUE;
-/*
-        while (OTIClockValues[pScrn->numClocks][0] != 0 || OTIClockValues[pScrn->numClocks][1] != 0)
-            pScrn->numClocks++;
-        xf86GetClocks(pScrn, pScrn->numClocks, Spitfire111ClockSelect,
-                              vgaHWProtectWeak(),
-                              vgaHWBlankScreenWeak(),
-                          pdrv->vgaIOBase + 0x0A, 0x08, 1, 28322);
-        from = X_PROBED;
-        for (i = 0; i < pScrn->numClocks; i++) {
-            if (OTIClockValues[i][2] != 0) pScrn->clock[i] = OTIClockValues[i][2];
-            ErrorF("clock[%d] = %d\t0x%02x,0x%02x\n", i, pScrn->clock[i], OTIClockValues[i][0], OTIClockValues[i][1] );
-        }
-        xf86ShowClocks(pScrn, from);
-*/        
     }
-#if 0
-    for (i = 0; i <= 0xffff; i+= 32 * 16 ) {
-	int j;
-
-	for (j = 0; j < 32; j++) {
-	    OTIClockValues[8 + j][1] = (i + j * 16) & 0xff;
-	    OTIClockValues[8 + j][0] = ((i + j * 16) >> 8) & 0xff;
-	    OTIClockValues[8 + j][2] = 0;
-	}
-	xf86GetClocks(pScrn, pScrn->numClocks, SpitfireClockSelect,
-                          vgaHWProtectWeak(),
-                          vgaHWBlankScreenWeak(),
-                      pdrv->vgaIOBase + 0x0A, 0x08, 1, 28322);
-	from = X_PROBED;
-	xf86ShowClocks(pScrn, from);
-    	for (j = 8; j < pScrn->numClocks; j++) {
-            ErrorF("0x%02x,0x%02x\t%d\n", OTIClockValues[j][0], OTIClockValues[j][1] , pScrn->clock[j]);
-	}
-
-    }
-    pScrn->numClocks = 8;
-#endif
 
     /* Next go on to detect amount of installed ram */
     if (!pScrn->videoRam) {
@@ -1036,14 +950,6 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     clockRanges->ClockMulFactor = 1.0;
 
     /* Look minimum and maximum discrete clock from previous probing. */
-/*
-    for (i = 0; i < pScrn->numClocks; i++) {
-        if (pScrn->clock[i] < clockRanges->minClock)
-            clockRanges->minClock = pScrn->clock[i];
-        if (pScrn->clock[i] > clockRanges->maxClock)
-            clockRanges->maxClock = pScrn->clock[i];
-    }
-*/
     for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
         if (OakClockTable[i][j] != 0) {
             if (OakClockTable[i][j] < clockRanges->minClock)
@@ -1237,14 +1143,13 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         //outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         if (pdrv->Chipset == OAK_64111) {
             unsigned int i, j, ci = 0, cj = 0;
+
+            /* Legacy values, currently unused */
+            new->EX0C = 0x4f;
+            new->EX0D = 0x31;
         
-            new->OR06 = 3;
-            new->EX0C = OTIClockValues[2][0];
-            new->EX0D = OTIClockValues[2][1];
-/*
-            new->EX0E = OTIClockValues[mode->ClockIndex][0];
-            new->EX0F = OTIClockValues[mode->ClockIndex][1];
-*/            
+            new->OR06 = 3; /* Choose clock set 3 at EX0E,EX0F */
+
             /* This assumes OakClockTable[0][0] == 0 */
             for (i = 0; i < 256; i++) for (j = 0; j < 256; j++) {
                 if (OakClockTable[i][j] <= mode->Clock && OakClockTable[ci][cj] < OakClockTable[i][j]) {
@@ -2016,35 +1921,6 @@ static Bool Spitfire107ClockSelect(ScrnInfoPtr pScrn, int no)
     default:
         outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         val = (inb(SPITFIRE_DATA) & 0xf0) | (no & 0x03);
-        OTI_OUTB(val, SPITFIRE_CLOCKSEL);
-        break;
-    }
-    return TRUE;
-}
-static Bool Spitfire111ClockSelect(ScrnInfoPtr pScrn, int no)
-{
-    SpitfirePtr pdrv = DEVPTR(pScrn);
-    unsigned char val;
-
-    switch (no) {
-    case CLK_REG_SAVE:
-        EX_INB(pdrv->saveClockReg[0], 0x0e);
-        EX_INB(pdrv->saveClockReg[1], 0x0f);
-        outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
-        pdrv->saveClock = inb(SPITFIRE_DATA) & 0x0f;
-        break;
-    case CLK_REG_RESTORE:
-        EX_OUTB(pdrv->saveClockReg[0], 0x0e);
-        EX_OUTB(pdrv->saveClockReg[1], 0x0f);
-        outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
-        val = (inb(SPITFIRE_DATA) & 0xf0) | (pdrv->saveClock & 0x0f);
-        OTI_OUTB(val, SPITFIRE_CLOCKSEL);
-        break;
-    default:
-        EX_OUTB(OTIClockValues[no][0], 0x0e);
-        EX_OUTB(OTIClockValues[no][1], 0x0f);
-        outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
-        val = (inb(SPITFIRE_DATA) & 0xf0) | 3; /* Test all values on clock 3 */
         OTI_OUTB(val, SPITFIRE_CLOCKSEL);
         break;
     }
