@@ -14,8 +14,8 @@ This software has NO WARRANTY.  Use it at your own risk.
 Adjustments for OAK Spitfire VBE by Alex Villacís Lasso
 */
 
-#ifndef _SAVAGEVBE_H
-#define _SAVAGEVBE_H
+#ifndef _SPITFIREVBE_H
+#define _SPITFIREVBE_H
 
 /*
  *  Common BIOS functions

@@ -575,7 +575,7 @@ Bool SpitfireEXAInit(ScreenPtr pScreen)
         return FALSE;
     } else {
         xf86DrvMsg(pScrn->scrnIndex, X_INFO,
-                   "Savage EXA Acceleration enabled.\n");
+                   "Spitfire EXA Acceleration enabled.\n");
         return TRUE;
     }
 }
