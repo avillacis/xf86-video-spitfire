@@ -230,8 +230,8 @@ SpitfireSetupPixMap(
     MMIO_OUT16(SPITFIRE_MMIO, SPITFIRE_PIXMAP_WIDTH,  pixWidth);
     MMIO_OUT16(SPITFIRE_MMIO, SPITFIRE_PIXMAP_HEIGHT, pixHeight);
     
-    /* Program pixel format */
-    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_PIXMAP_FORMAT, pixFormat);
+    /* Program pixel format. All pixmaps are assumed to be in framebuffer, not in system memory. */
+    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_PIXMAP_FORMAT, pixFormat | SPITFIRE_FORMAT_VIDEOMEM);
 }
 
 #ifdef HAVE_XAA_H
@@ -630,7 +630,7 @@ int SpitfireGetCopyROP(int rop) {
     return (ALUCopyROP[rop]);
 }
 
-static void SpitfireSetupPixmap(SpitfirePtr pdrv, PixmapPtr pPixmap, unsigned int index)
+static void SpitfireEXASetupPixmap(SpitfirePtr pdrv, PixmapPtr pPixmap, unsigned int index)
 {
     unsigned long xpix, ypix;
 
@@ -685,7 +685,7 @@ SpitfirePrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg)
     MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_ROPMIX, SpitfireGetCopyROP(alu));
 
     /* Set up destination pixmap */
-    SpitfireSetupPixmap(pdrv, pPixmap, SPITFIRE_INDEX_PIXMAP_C);
+    SpitfireEXASetupPixmap(pdrv, pPixmap, SPITFIRE_INDEX_PIXMAP_C);
     
     pdrv->SavedAccelCmd = cmd;
     return TRUE;
@@ -757,8 +757,8 @@ SpitfirePrepareCopy(PixmapPtr pSrcPixmap, PixmapPtr pDstPixmap, int xdir, int yd
     MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_ROPMIX, SpitfireGetCopyROP(alu));
     
     /* Set up source and destination pixmaps */
-    SpitfireSetupPixmap(pdrv, pSrcPixmap, SPITFIRE_INDEX_PIXMAP_A);
-    SpitfireSetupPixmap(pdrv, pDstPixmap, SPITFIRE_INDEX_PIXMAP_C);
+    SpitfireEXASetupPixmap(pdrv, pSrcPixmap, SPITFIRE_INDEX_PIXMAP_A);
+    SpitfireEXASetupPixmap(pdrv, pDstPixmap, SPITFIRE_INDEX_PIXMAP_C);
 
     pdrv->SavedAccelCmd = cmd;
     return TRUE;
