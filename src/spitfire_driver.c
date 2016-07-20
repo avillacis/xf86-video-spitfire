@@ -29,6 +29,7 @@
 
 /*#define TRACEON*/
 /*#define DUMP_REGISTERS*/
+/*#define ENABLE_DDC */
 
 #ifdef TRACEON
 #define TRACE(prms)     ErrorF prms
@@ -403,6 +404,8 @@ static int LookupChipID( PciChipsets* pset, int ChipID )
 }
 #endif
 
+#ifdef ENABLE_DDC
+
 #define VerticalRetraceWait()           \
 do {                                    \
         int vgaCRIndex = pdrv->vgaIOBase + 4; \
@@ -529,6 +532,7 @@ static void SpitfireDoDDC(ScrnInfoPtr pScrn)
         }
     }
 }
+#endif
 
 static void SpitfireProbeDDC(ScrnInfoPtr pScrn, int index)
 {
@@ -895,9 +899,9 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         pdrv->videoRambytes = pScrn->videoRam * 1024;
     }
     pdrv->endfb = pdrv->videoRambytes;
-
+#ifdef ENABLE_DDC
     SpitfireDoDDC(pScrn);
-
+#endif
     pScrn->maxHValue = 2048 << 3;        /* 11 bits of h_total 8-pixel units */
     pScrn->maxVValue = 2048;                /* 11 bits of v_total */
     pScrn->virtualX = pScrn->display->virtualX;
