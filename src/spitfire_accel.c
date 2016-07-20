@@ -650,7 +650,7 @@ static void SpitfireEXASetupPixmap(SpitfirePtr pdrv, PixmapPtr pPixmap, unsigned
             pixFormat);
     } else {
         SpitfireSetupPixMap(pdrv, index, 
-            exaGetPixmapOffset(pPixmap), xpix * 3 - 1, ypix - 1, 
+            exaGetPixmapOffset(pPixmap), exaGetPixmapPitch(pPixmap) - 1, ypix - 1,
             SPITFIRE_FORMAT_8BPP);
     }
 }
