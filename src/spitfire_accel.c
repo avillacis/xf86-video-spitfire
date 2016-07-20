@@ -668,10 +668,15 @@ SpitfirePrepareSolid(PixmapPtr pPixmap, int alu, Pixel planemask, Pixel fg)
         | SPITFIRE_FORE_SRC_FGCOLOR /* <-- Use foreground color, not pixmap, as source */
         | SPITFIRE_BACK_SRC_BGCOLOR;/* <-- Use background color, not pixmap, as source */
 
-    /* Cannot accelerate solid fill for 24-bit if not grayscale */
-    if (pPixmap->drawable.bitsPerPixel == 24 && 
-        (((fg & 0x0000FF) != ((fg >> 8) & 0x0000FF)) || ((fg & 0x0000FF) != ((fg >> 16) & 0x0000FF))))
-        return FALSE;
+    if (pPixmap->drawable.bitsPerPixel == 24) {
+        /* Cannot accelerate solid fill for 24-bit if not grayscale */
+        if ((((fg & 0x0000FF) != ((fg >> 8) & 0x0000FF)) || ((fg & 0x0000FF) != ((fg >> 16) & 0x0000FF))))
+            return FALSE;
+
+        /* Reject pitches greater than 0xFFF on 24bpp */
+        if (exaGetPixmapPitch(pPixmap) > 0xFFF)
+            return FALSE;
+    }
 
     /* Need to wait for previous accel operation to finish, otherwise
      * output gets scrambled. */
@@ -742,10 +747,17 @@ SpitfirePrepareCopy(PixmapPtr pSrcPixmap, PixmapPtr pDstPixmap, int xdir, int yd
     if (xdir < 0) cmd |= SPITFIRE_DEC_X;
     if (ydir < 0) cmd |= SPITFIRE_DEC_Y;
 
-    // Cannot accelerate copy when just one of the pixmaps is 24bpp
+    /* Cannot accelerate copy when just one of the pixmaps is 24bpp */
     if ((pSrcPixmap->drawable.bitsPerPixel == 24 || pDstPixmap->drawable.bitsPerPixel == 24)
         && pSrcPixmap->drawable.bitsPerPixel != pDstPixmap->drawable.bitsPerPixel)
         return FALSE;
+
+    if (pDstPixmap->drawable.bitsPerPixel == 24) {
+        /* Reject pitches greater than 0xFFF on 24bpp */
+        if (exaGetPixmapPitch(pSrcPixmap) > 0xFFF) return FALSE;
+        if (exaGetPixmapPitch(pDstPixmap) > 0xFFF) return FALSE;
+    }
+
 
     /* Need to wait for previous accel operation to finish, otherwise
      * output gets scrambled. */
