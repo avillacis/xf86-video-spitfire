@@ -545,6 +545,17 @@ static void SpitfireProbeDDC(ScrnInfoPtr pScrn, int index)
     }
 }
 
+static unsigned int SpitfireProbeVRAM()
+{
+    unsigned char status;
+
+    /* NOTE: this register is initialized by the Oak VGA BIOS */
+    outb(SPITFIRE_INDEX, SPITFIRE_STATUS);
+    status = inb(SPITFIRE_DATA);
+
+    return 1 << (((status & 0x0E) >> 1) + 8);
+}
+
 /**
  * PreInit implementation for this driver. Here the xorg.conf options are 
  * parsed and stored, and the hardware is probed to check that it can comply
@@ -854,19 +865,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     /* Next go on to detect amount of installed ram */
     if (!pScrn->videoRam) {
-        unsigned char status;
-
-        outb(SPITFIRE_INDEX, SPITFIRE_STATUS);
-        status = inb(SPITFIRE_DATA);
-        switch ((status & 0x06) >> 1) {
-        case 0: pScrn->videoRam =  256; break;
-        case 1: pScrn->videoRam =  512; break;
-        case 2: pScrn->videoRam = 1024; break;
-        case 3: pScrn->videoRam = 2048; break;
-        case 4: pScrn->videoRam = 4096; break;
-        case 5: pScrn->videoRam = 8192; break;
-        default: pScrn->videoRam = 0; break; /* Should not happen */
-        }
+        pScrn->videoRam = SpitfireProbeVRAM();
         pdrv->videoRambytes = pScrn->videoRam * 1024;
 
         xf86DrvMsg(pScrn->scrnIndex, X_PROBED, 
