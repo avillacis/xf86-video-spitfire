@@ -1171,6 +1171,9 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR26 = 0x09; /* 0x08 enable half clock 0x01 */
         new->OR28 = 0x0B; /* RAS-only refresh */
         new->OR29 = 0x02; /* Hardware window arbitration */
+        new->EX02 = 0x6f;
+        new->EX03 = 0x16;
+        new->EX07 = 0x01;
         new->MM0A = 0xa5;
 
         if (mode->Flags & V_INTERLACE ) {
@@ -1859,6 +1862,10 @@ static void SpitfireSave(ScrnInfoPtr pScrn)
     save->MM0A = SPITFIRE_MMIO[0x0a];
 
     if (pdrv->Chipset == OAK_64111) {
+        EX_INB(save->EX02, 0x02);
+        EX_INB(save->EX03, 0x03);
+        EX_INB(save->EX07, 0x07);
+
         /* Save previous clock settings. The 64111 selects one of four clock settings 
          * via OR06, and the actual programmings are done in EX08/EX09 for clock 0,
          * EX0A/EX0B for clock 1, EX0C/EX0D for clock 2, and EX0E/EX0F for clock 3.
@@ -1915,6 +1922,10 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
     vgaSavePtr->MiscOutReg = (vgaSavePtr->MiscOutReg & 0xF3) | ((restore->OR06 &0x03) << 2);
 
     if (pdrv->Chipset == OAK_64111) {
+        EX_OUTB(restore->EX02, 0x02);
+        EX_OUTB(restore->EX03, 0x03);
+        EX_OUTB(restore->EX07, 0x07);
+
         /* Program clock frequency */
         EX_OUTB(restore->EX0C, 0x0c);
         EX_OUTB(restore->EX0D, 0x0d);

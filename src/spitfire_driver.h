@@ -69,7 +69,7 @@ typedef struct {
 
     /* The following registers are programmed via the port at pdrv->extIOBase
        plus SPITFIRE_EX_INDEX/SPITFIRE_EX_DATA */
-	unsigned char EX0C, EX0D, EX0E, EX0F; /* Clock selection */
+	unsigned char EX02, EX03, EX07, EX0C, EX0D, EX0E, EX0F; /* Clock selection */
 	unsigned char EX30, EX31; /* Hicolor/Truecolor and DAC width */
 } SpitfireRegRec, *SpitfireRegPtr;
 
