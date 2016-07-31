@@ -151,19 +151,20 @@ typedef enum {
     ,OPTION_SHADOW_FB
     ,OPTION_ROTATE
     ,OPTION_USEBIOS
-    ,OPTION_FORCE_INIT
+    ,OPTION_INIT_BIOS
     ,OPTION_IGNORE_EDID
 } SpitfireOpts;
 
 
 static const OptionInfoRec SpitfireOptions[] =
 {
-    { OPTION_SHADOW_FB,        "ShadowFB",        OPTV_BOOLEAN, {0}, FALSE },
-    { OPTION_USEBIOS,        "UseBIOS",        OPTV_BOOLEAN, {0}, FALSE },
-    { OPTION_ROTATE,        "Rotate",        OPTV_ANYSTR, {0}, FALSE },
-    { OPTION_IGNORE_EDID,  "IgnoreEDID",  OPTV_BOOLEAN, {0}, FALSE },
-    { OPTION_NOACCEL,        "NoAccel",        OPTV_BOOLEAN, {0}, FALSE },
-    { OPTION_ACCELMETHOD, "AccelMethod", OPTV_STRING,        {0}, FALSE },
+    { OPTION_SHADOW_FB,     "ShadowFB",     OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_USEBIOS,       "UseBIOS",      OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_ROTATE,        "Rotate",       OPTV_ANYSTR,    {0}, FALSE },
+    { OPTION_IGNORE_EDID,   "IgnoreEDID",   OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_NOACCEL,       "NoAccel",      OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_ACCELMETHOD,   "AccelMethod",  OPTV_STRING,    {0}, FALSE },
+    { OPTION_INIT_BIOS,     "InitBIOS",     OPTV_BOOLEAN,    {0}, FALSE },
 
     { -1,                NULL,                OPTV_NONE,    {0}, FALSE }
 };
@@ -756,6 +757,15 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     xf86DrvMsg(pScrn->scrnIndex, from, "%ssing video BIOS to set modes\n",
         pdrv->UseBIOS ? "U" : "Not u" );
 
+    from = X_DEFAULT;
+    pdrv->InitBIOS = TRUE;
+    if (!pdrv->UseBIOS) {
+        if (xf86GetOptValBool(pdrv->Options, OPTION_INIT_BIOS, &pdrv->InitBIOS) )
+            from = X_CONFIG;
+    }
+    xf86DrvMsg(pScrn->scrnIndex, from, "%snitializing video card using video BIOS\n",
+        pdrv->InitBIOS ? "I" : "Not i" );
+
     if (pScrn->numEntities > 1) {
         SpitfireFreeRec(pScrn);
         return FALSE;
@@ -771,8 +781,11 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 #endif
     pdrv->EntityIndex = pEnt->index;
 
-    if (xf86LoadSubModule(pScrn, "vbe")) {
-        pdrv->pVbe = VBEInit(NULL, pEnt->index);
+    pdrv->pVbe = NULL;
+    if (pdrv->InitBIOS) {
+        if (xf86LoadSubModule(pScrn, "vbe")) {
+            pdrv->pVbe = VBEInit(NULL, pEnt->index);
+        }
     }
 
 #ifndef XSERVER_LIBPCIACCESS
@@ -814,7 +827,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     xf86DrvMsg(pScrn->scrnIndex, from, "Engine: \"%s\"\n", pScrn->chipset);
 
     if (pEnt->device->videoRam != 0)
-            pScrn->videoRam = pEnt->device->videoRam;
+        pScrn->videoRam = pEnt->device->videoRam;
 
     free(pEnt);
 
@@ -829,7 +842,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     if (!SpitfireMapMem(pScrn)) {
         SpitfireFreeRec(pScrn);
-        vbeFree(pdrv->pVbe);
+        if (pdrv->pVbe) vbeFree(pdrv->pVbe);
         pdrv->pVbe = NULL;
         return FALSE;
     }
@@ -838,7 +851,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         Gamma zeros = {0.0, 0.0, 0.0};
 
         if (!xf86SetGamma(pScrn, zeros)) {
-            vbeFree(pdrv->pVbe);
+            if (pdrv->pVbe) vbeFree(pdrv->pVbe);
             pdrv->pVbe = NULL;
             SpitfireFreeRec(pScrn);
             return FALSE;
@@ -978,7 +991,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if (i == -1) {
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "xf86ValidateModes failure\n");
         SpitfireFreeRec(pScrn);
-        vbeFree(pdrv->pVbe);
+        if (pdrv->pVbe) vbeFree(pdrv->pVbe);
         pdrv->pVbe = NULL;
         return FALSE;
     }
@@ -988,7 +1001,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if (i == 0 || pScrn->modes == NULL) {
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "No valid modes found\n");
         SpitfireFreeRec(pScrn);
-        vbeFree(pdrv->pVbe);
+        if (pdrv->pVbe) vbeFree(pdrv->pVbe);
         pdrv->pVbe = NULL;
         return FALSE;
     }
@@ -1000,7 +1013,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     if (xf86LoadSubModule(pScrn, "fb") == NULL) {
         SpitfireFreeRec(pScrn);
-        vbeFree(pdrv->pVbe);
+        if (pdrv->pVbe) vbeFree(pdrv->pVbe);
         pdrv->pVbe = NULL;
         return FALSE;
     }
@@ -1021,7 +1034,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
                 NULL, NULL, NULL, &req, &errmaj, &errmin) ) {
                 LoaderErrorMsg(NULL, modName, errmaj, errmin);
                     SpitfireFreeRec(pScrn);
-                    vbeFree(pdrv->pVbe);
+                    if (pdrv->pVbe) vbeFree(pdrv->pVbe);
                     pdrv->pVbe = NULL;
                     return FALSE;
             }
@@ -1029,7 +1042,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
             modName = "xaa";
             if( !xf86LoadSubModule(pScrn, modName) ) {
                     SpitfireFreeRec(pScrn);
-                    vbeFree(pdrv->pVbe);
+                    if (pdrv->pVbe) vbeFree(pdrv->pVbe);
                     pdrv->pVbe = NULL;
                     return FALSE;
             } 
@@ -1039,12 +1052,12 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if (pdrv->shadowFB) {
         if (!xf86LoadSubModule(pScrn, "shadowfb")) {
             SpitfireFreeRec(pScrn);
-            vbeFree(pdrv->pVbe);
+            if (pdrv->pVbe) vbeFree(pdrv->pVbe);
             pdrv->pVbe = NULL;
             return FALSE;
         }
     }
-    vbeFree(pdrv->pVbe);
+    if (pdrv->pVbe) vbeFree(pdrv->pVbe);
 
     pdrv->pVbe = NULL;
 
@@ -1419,7 +1432,7 @@ void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
     TRACE(("SpitfireLoadPalette\n"));
 
     /* Query bits of palette via VESA */
-    if (pdrv->UseBIOS) {
+    if (pdrv->UseBIOS && pdrv->pVbe) {
         bitsPerDAC = VBESetGetDACPaletteFormat(pdrv->pVbe, 0);
         if (bitsPerDAC == 6) {
             int r;
@@ -1539,8 +1552,6 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
     TRACE(("SpitfireScreenInit()\n"));
 
     pEnt = xf86GetEntityInfo(pScrn->entityList[0]); 
-    if (!pdrv->pVbe)
-        pdrv->pVbe = VBEInit(NULL, pEnt->index);
 
     if (!SpitfireMapMem(pScrn))
         return FALSE;

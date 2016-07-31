@@ -169,6 +169,7 @@ typedef struct _Spitfire {
     Bool			NoAccel;
     Bool			shadowFB;
     Bool			UseBIOS;
+    Bool			InitBIOS;
     int				rotate;
 
     CloseScreenProcPtr	CloseScreen;
