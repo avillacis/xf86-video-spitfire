@@ -1890,9 +1890,12 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
     }
 
     OTI_OUTB(restore->OR10, 0x10); /* Local bus control */
+    OTI_OUTB(restore->OR13, 0x13); /* ISA bus control */
     OTI_OUTB(restore->OR04, 0x04); /* OTI Test Register 2 */
     OTI_OUTB(restore->OR03, 0x03); /* OTI Test Register 1 */
     OTI_OUTB(restore->OR33, 0x33); /* CRT Address Compatibility */
+    OTI_OUTB(restore->OR26, 0x26);
+    OTI_OUTB(restore->OR28, 0x28);
     OTI_OUTB(restore->OR29, 0x29); /* Hardware window arbitration */
     OTI_OUTB(restore->OR20, 0x20); /* FIFO depth */
     OTI_OUTB(restore->OR30, 0x30); /* OTI CRT overflow */
