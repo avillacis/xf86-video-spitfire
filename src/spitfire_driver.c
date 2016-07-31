@@ -1079,9 +1079,6 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
             return FALSE;
         }
     }
-    if (pdrv->pVbe) vbeFree(pdrv->pVbe);
-
-    pdrv->pVbe = NULL;
 
     return TRUE;
 }
@@ -1906,7 +1903,7 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
      * If we figured out a VESA mode number for this timing, just use
      * the VESA BIOS to do the switching, with a few additional tweaks.
      */
-    if (pdrv->UseBIOS && restore->mode > 0x13)
+    if (pdrv->UseBIOS && restore->mode > 0x13 && pdrv->pVbe)
     {
         /* Set up the mode.  Don't clear video RAM. */
         SpitfireSetVESAMode( pdrv, restore->mode | 0x8000);
