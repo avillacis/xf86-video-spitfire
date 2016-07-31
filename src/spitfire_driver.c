@@ -67,6 +67,7 @@ static int LookupChipID(PciChipsets* pset, int ChipID);
 #endif
 static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags);
 
+static void SpitfirePrepareMapMem(ScrnInfoPtr pScrn);
 static Bool SpitfireMapMem(ScrnInfoPtr pScrn);
 static void SpitfireUnmapMem(ScrnInfoPtr pScrn, int All);
 static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode);
@@ -153,6 +154,7 @@ typedef enum {
     ,OPTION_USEBIOS
     ,OPTION_INIT_BIOS
     ,OPTION_IGNORE_EDID
+    ,OPTION_DUMP_REGS
 } SpitfireOpts;
 
 
@@ -164,7 +166,8 @@ static const OptionInfoRec SpitfireOptions[] =
     { OPTION_IGNORE_EDID,   "IgnoreEDID",   OPTV_BOOLEAN,   {0}, FALSE },
     { OPTION_NOACCEL,       "NoAccel",      OPTV_BOOLEAN,   {0}, FALSE },
     { OPTION_ACCELMETHOD,   "AccelMethod",  OPTV_STRING,    {0}, FALSE },
-    { OPTION_INIT_BIOS,     "InitBIOS",     OPTV_BOOLEAN,    {0}, FALSE },
+    { OPTION_INIT_BIOS,     "InitBIOS",     OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_DUMP_REGS,     "DumpRegs",     OPTV_BOOLEAN,   {0}, FALSE },
 
     { -1,                NULL,                OPTV_NONE,    {0}, FALSE }
 };
@@ -766,6 +769,13 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     xf86DrvMsg(pScrn->scrnIndex, from, "%snitializing video card using video BIOS\n",
         pdrv->InitBIOS ? "I" : "Not i" );
 
+    from = X_DEFAULT;
+    pdrv->DumpRegs = FALSE;
+    if (xf86GetOptValBool(pdrv->Options, OPTION_DUMP_REGS, &pdrv->DumpRegs) )
+        from = X_CONFIG;
+    if (pdrv->DumpRegs)
+        xf86DrvMsg(pScrn->scrnIndex, from, "Dumping video card registers at key operations\n");
+
     if (pScrn->numEntities > 1) {
         SpitfireFreeRec(pScrn);
         return FALSE;
@@ -781,11 +791,23 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 #endif
     pdrv->EntityIndex = pEnt->index;
 
+    SpitfirePrepareMapMem(pScrn);
+
+    if (pdrv->DumpRegs) {
+        ErrorF("Register status before soft-boot:\n");
+        SpitfirePrintRegs(pScrn);
+    }
+
     pdrv->pVbe = NULL;
     if (pdrv->InitBIOS) {
         if (xf86LoadSubModule(pScrn, "vbe")) {
             pdrv->pVbe = VBEInit(NULL, pEnt->index);
         }
+    }
+
+    if (pdrv->DumpRegs) {
+        ErrorF("Register status after soft-boot:\n");
+        SpitfirePrintRegs(pScrn);
     }
 
 #ifndef XSERVER_LIBPCIACCESS
@@ -1104,9 +1126,12 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
 
     TRACE(("SpitfireModeInit(%dx%d, %dkHz)\n", 
         mode->HDisplay, mode->VDisplay, mode->Clock));
-#ifdef DUMP_REGISTERS
-    SpitfirePrintRegs(pScrn);
-#endif
+
+    if (pdrv->DumpRegs) {
+        ErrorF("Before video mode initialization:\n");
+        SpitfirePrintRegs(pScrn);
+    }
+
     if (!vgaHWInit(pScrn, mode))
         return FALSE;
 
@@ -1159,7 +1184,6 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         }
 
         /* Program selected clock index */
-        //outb(SPITFIRE_INDEX, SPITFIRE_CLOCKSEL);
         if (pdrv->Chipset == OAK_64111) {
             unsigned int m, n, r;
 
@@ -1239,18 +1263,17 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
     /* do it! */
     SpitfireWriteMode(pScrn, vganew, new, TRUE);
     SpitfireAdjustFrame(ADJUST_FRAME_ARGS(pScrn, pScrn->frameX0, pScrn->frameY0));
-#ifdef DUMP_REGISTERS
-    SpitfirePrintRegs(pScrn);
-#endif
+
+    if (pdrv->DumpRegs) {
+        ErrorF("After video mode initialization:\n");
+        SpitfirePrintRegs(pScrn);
+    }
     return TRUE;
 }
 
-static Bool SpitfireMapMem(ScrnInfoPtr pScrn)
+static void SpitfirePrepareMapMem(ScrnInfoPtr pScrn)
 {
     SpitfirePtr pdrv = DEVPTR(pScrn);
-    int err;
-
-    TRACE(("SpitfireMapMem()\n"));
 
     /* On the 64111 (probably on the 64107 too) the MMIO is at PCI base 0,
        the framebuffer is at PCI base 1, and the PIO base is at PCI base 2. */
@@ -1269,8 +1292,18 @@ static Bool SpitfireMapMem(ScrnInfoPtr pScrn)
     pdrv->FbRegion.base = pdrv->PciInfo->memBase[1];
     pdrv->extIOBase = pdrv->PciInfo->ioBase[2];
 #endif
-    pdrv->FbRegion.size = pdrv->videoRambytes; /* Might be 0 if videoram is not yet probed */
+}
 
+static Bool SpitfireMapMem(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    int err;
+
+    TRACE(("SpitfireMapMem()\n"));
+
+    /* Assumes that SpitfirePrepareMapMem was previously called */
+
+    pdrv->FbRegion.size = pdrv->videoRambytes; /* Might be 0 if videoram is not yet probed */
     if (pdrv->FbRegion.size != 0 && pdrv->FbRegion.memory == NULL) {
 #ifdef XSERVER_LIBPCIACCESS
         err = pci_device_map_range(pdrv->PciInfo, pdrv->FbRegion.base,
@@ -2006,6 +2039,7 @@ static void SpitfirePrintRegs(ScrnInfoPtr pScrn)
     SpitfirePtr pdrv = DEVPTR(pScrn);
     unsigned int i, j;
     unsigned char save;
+    Bool privatemap;
     int vgaCRIndex = pdrv->vgaIOBase + 4;
     int vgaCRReg = vgaCRIndex + 1;
 
@@ -2059,13 +2093,23 @@ static void SpitfirePrintRegs(ScrnInfoPtr pScrn)
         ErrorF( " %02x", inb(SPITFIRE_DATA) );
     }
 
-    ErrorF ("\n\nOTI011 x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 xA xB xC xD xE xF");
-    for (i = 0; i < 64; i++) {
-        if( !(i % 16) )
-            ErrorF( "\nOTI%xx ", i >> 4 );
-        outb(pdrv->extIOBase + SPITFIRE_EX_INDEX, i);
-        ErrorF( " %02x", inb(pdrv->extIOBase + SPITFIRE_EX_DATA) );
+    privatemap = FALSE;
+    if (pdrv->FbRegion.memory == NULL) {
+        privatemap = TRUE;
+        SpitfireMapMem(pScrn);
+    }
 
+    if (pdrv->extIOBase) {
+        ErrorF ("\n\nOTI011 x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 xA xB xC xD xE xF");
+        for (i = 0; i < 64; i++) {
+            if( !(i % 16) )
+                ErrorF( "\nOTI%xx ", i >> 4 );
+            outb(pdrv->extIOBase + SPITFIRE_EX_INDEX, i);
+            ErrorF( " %02x", inb(pdrv->extIOBase + SPITFIRE_EX_DATA) );
+
+        }
+    } else {
+        ErrorF("\n\n(extIOBase not set, cannot dump registers from PCI bar)\n");
     }
 
 /*
@@ -2078,22 +2122,29 @@ static void SpitfirePrintRegs(ScrnInfoPtr pScrn)
 	}
 */
     /* Need to enable MMIO in order to dump its contents */
+    if (pdrv->MapBase) {
+        outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
+        save = inb(SPITFIRE_DATA);
+        outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
+        outb(SPITFIRE_DATA, save | 0x80);
 
-    outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
-    save = inb(SPITFIRE_DATA);
-    outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
-    outb(SPITFIRE_DATA, save | 0x80);
+        ErrorF( "\n\nMEM    x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 xA xB xC xD xE xF" );
 
-    ErrorF( "\n\nMEM    x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 xA xB xC xD xE xF" );
+        for( i = 0; i < pdrv->MmioRegion.size; i++ ) {
+            if( !(i % 16) )
+                ErrorF( "\nMM%02xx ", i >> 4 );
+            ErrorF( " %02x", SPITFIRE_MMIO[i] );
+        }
 
-    for( i = 0; i < pdrv->MmioRegion.size; i++ ) {
-        if( !(i % 16) )
-            ErrorF( "\nMM%02xx ", i >> 4 );
-        ErrorF( " %02x", SPITFIRE_MMIO[i] );
+        outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
+        outb(SPITFIRE_DATA, save);
+    } else {
+        ErrorF("\n\n(MapBase not set, cannot dump MMIO from PCI bar)\n");
     }
 
-    outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
-    outb(SPITFIRE_DATA, save);
+    if (privatemap) {
+        SpitfireUnmapMem(pScrn, 1);
+    }
 
     ErrorF("\n\n");
 }
