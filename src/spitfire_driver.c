@@ -1136,12 +1136,15 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR04 = 0x60;
         new->OR0F = 0x80;
         new->OR10 = 0x55;
+        new->OR13 = 0xC0; /* Enable 16-bit memory (0x80) and I/O (0x40) access */
         new->OR14 = 0x0C | 0x1; /* Memory mapping, enable linear framebuffer */
         new->OR21 = 0x0C; /* Mode Select, common bits (see below) */
         new->OR22 = 0x60; /* Feature Select, enable write mode 4, read mode 4 */
         new->OR22 |= 0x04; /* Enable coprocessor command buffer */
         new->OR22 |= 0x08; /* Enable write cache */
         new->OR25 = 0x00; /* Read/write segment */
+        new->OR26 = 0x09; /* 0x08 enable half clock 0x01 */
+        new->OR28 = 0x0B; /* RAS-only refresh */
         new->OR29 = 0x02; /* Hardware window arbitration */
         new->MM0A = 0xa5;
 
@@ -1805,11 +1808,14 @@ static void SpitfireSave(ScrnInfoPtr pScrn)
     outb(SPITFIRE_INDEX, 0x06); save->OR06 = inb(SPITFIRE_DATA) & 3; /* Clock select */
     outb(SPITFIRE_INDEX, 0x0f); save->OR0F = inb(SPITFIRE_DATA);
     outb(SPITFIRE_INDEX, 0x10); save->OR10 = inb(SPITFIRE_DATA); /* Local bus control */
+    outb(SPITFIRE_INDEX, 0x13); save->OR13 = inb(SPITFIRE_DATA); /* ISA bus control */
     outb(SPITFIRE_INDEX, 0x14); save->OR14 = inb(SPITFIRE_DATA); /* Memory mapping */
     outb(SPITFIRE_INDEX, 0x20); save->OR20 = inb(SPITFIRE_DATA); /* FIFO depth */
     outb(SPITFIRE_INDEX, 0x21); save->OR21 = inb(SPITFIRE_DATA); /* Mode select */
     outb(SPITFIRE_INDEX, 0x22); save->OR22 = inb(SPITFIRE_DATA); /* Feature select */
     outb(SPITFIRE_INDEX, 0x25); save->OR25 = inb(SPITFIRE_DATA); /* Extended common read/write segment */
+    outb(SPITFIRE_INDEX, 0x26); save->OR26 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x28); save->OR28 = inb(SPITFIRE_DATA);
     outb(SPITFIRE_INDEX, 0x29); save->OR29 = inb(SPITFIRE_DATA); /* Hardware window arbitration */
     outb(SPITFIRE_INDEX, 0x30); save->OR30 = inb(SPITFIRE_DATA); /* OTI CRT overflow */
     outb(SPITFIRE_INDEX, 0x31); save->OR31 = inb(SPITFIRE_DATA); /* CRT Start Address High */

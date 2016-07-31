@@ -60,8 +60,8 @@ typedef struct {
 
     /* All of these registers are programmed via port 3deh */
 	unsigned char OR03, OR04, OR06, OR0F;
-	unsigned char OR10, OR14;
-	unsigned char OR20, OR21, OR22, OR25, OR29;
+	unsigned char OR10, OR13, OR14;
+	unsigned char OR20, OR21, OR22, OR25, OR26, OR28, OR29;
 	unsigned char OR30, OR31, OR32, OR33, OR38;
 
     /* Programmed via MMIO */
