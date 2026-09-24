@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdint.h>
 
 #include "xf86.h"
 #include "xf86_OSproc.h"
@@ -75,9 +76,13 @@ static void SpitfireEnableMMIO(ScrnInfoPtr pScrn);
 static void SpitfireDisableMMIO(ScrnInfoPtr pScrn);
 void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
 		       LOCO *colors, VisualPtr pVisual);
+#if 0 /* Disabled: incomplete PLL formula, see SpitfireCalcClock */
 static void SpitfireCalcClock(long freq, int min_m, int min_n1, int max_n1,
 			   int min_n2, int max_n2, long freq_min,
 			   long freq_max, unsigned int *mdiv,
+			   unsigned int *ndiv, unsigned int *r);
+#endif
+static void SpitfireCalcClock(long freq, unsigned int *mdiv,
 			   unsigned int *ndiv, unsigned int *r);
 static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL);
 static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL);
@@ -1187,13 +1192,14 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         if (pdrv->Chipset == OAK_64111) {
             unsigned int m, n, r;
 
-            /* Legacy values, currently unused */
-            new->EX0C = 0x4f;
-            new->EX0D = 0x31;
-        
+            /*
+             * EX0C/EX0D (clock 2) are never written, and keep their
+             * power-up value. Every mode gets clock 3, programmed at
+             * EX0E/EX0F.
+             */
             new->OR06 = 3; /* Choose clock set 3 at EX0E,EX0F */
 
-            SpitfireCalcClock(mode->Clock, 8, 1, 63, 0, 3, 12210, 135000, &m, &n, &r);
+            SpitfireCalcClock(mode->Clock, &m, &n, &r);
 
             new->EX0E = m;
             new->EX0F = ((r << 6) & 0xc0) | (n & 0x3f);
@@ -1495,6 +1501,27 @@ void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
     }
 }
 
+/*
+ * DISABLED (2026-09-21): the original SpitfireCalcClock.
+ *
+ * It assumed that the pixel PLL produces
+ *
+ *     f = 14.31818 MHz * m / n1 / 2^n2
+ *
+ * which is not what the chip does. Measuring the card (oakclock, in
+ * oak-debuginfo/init_64111) showed that the feedback multiplier has an
+ * offset of +8, the reference divider an offset of +2, and that some
+ * multiplier values cannot be produced at all (see the formula below).
+ * The divisors computed here are therefore off by an amount that varies
+ * almost randomly with the requested frequency: 25.175 MHz came out as
+ * 25.29 MHz (+0.4%) and 31.5 MHz as 36.82 MHz (+17%), both measured;
+ * according to the corrected formula, 40 MHz comes out as 40.53 MHz (+1.3%)
+ * and 135 MHz as 117.7 MHz (-13%). Its VCO range check (12.21-135 MHz on
+ * m/n1) was also applied to the wrong quantity.
+ *
+ * Kept for reference only.
+ */
+#if 0
 #define BASE_FREQ			14.31818
 static void SpitfireCalcClock(long freq, int min_m, int min_n1, int max_n1,
 			   int min_n2, int max_n2, long freq_min,
@@ -1542,6 +1569,116 @@ static void SpitfireCalcClock(long freq, int min_m, int min_n1, int max_n1,
             }
         }
     }
+
+    *ndiv = best_n1;
+    *r = best_n2;
+    *mdiv = best_m;
+}
+#endif /* original SpitfireCalcClock */
+
+/*
+ * Pixel PLL divisors, using the formula measured on the card:
+ *
+ *     f = 14.31818 MHz * M / ((n1 + 2) * 2^n2)
+ *
+ *     m register (EX0E)  = M - 8, but see below
+ *     n register (EX0F)  = n2 << 6 | n1, with n1 = 1..63 (0 is not valid)
+ *
+ * The feedback counter behaves like an 8/9 dual-modulus prescaler: writing
+ * M = 8q + r (r = 0..7), only values with r <= q exist. For any other value
+ * the chip uses 9q instead. This only affects M < 56, that is, m < 48.
+ *
+ * The VCO (before the 2^n2 post-divider) was seen locking between 12.3 and
+ * 215 MHz. A 25-200 MHz range is used, with margin on both sides; with
+ * 2^n2 up to 8 this still covers 3.1-200 MHz at the output.
+ *
+ * Integer arithmetic only, so the same code can go into a kernel driver.
+ * For every (n1, n2) the ideal M is want * d / base, with d = (n1+2) * 2^n2,
+ * and only the nearest realizable M below and above it can win. The error
+ * of a candidate is the fraction |want * d - base * M| / d, and two errors
+ * are compared by cross-multiplying, without any division. With want up to
+ * 200 MHz and d up to 65*8 = 520 every product stays below 6e13.
+ */
+#define SPITFIRE_XTAL_HZ     14318180LL
+#define SPITFIRE_VCO_MIN_HZ  25000000LL
+#define SPITFIRE_VCO_MAX_HZ 200000000LL
+#define SPITFIRE_PLL_M_MIN   8           /* m register = 0   */
+#define SPITFIRE_PLL_M_MAX   263         /* m register = 255 */
+
+/* Highest realizable multiplier not above M */
+static unsigned int SpitfirePLLMultBelow(unsigned int M)
+{
+    unsigned int q = M >> 3, r = M & 7;
+
+    return (r <= q) ? M : 9 * q;
+}
+
+/* Lowest realizable multiplier not below M */
+static unsigned int SpitfirePLLMultAbove(unsigned int M)
+{
+    unsigned int q = M >> 3, r = M & 7;
+
+    return (r <= q) ? M : 8 * (q + 1);
+}
+
+/* M fits in the register and keeps the VCO within the safe range */
+static Bool SpitfirePLLUsable(unsigned int M, unsigned int n1)
+{
+    int64_t vco_times_n = SPITFIRE_XTAL_HZ * M;    /* VCO * (n1 + 2) */
+
+    return M >= SPITFIRE_PLL_M_MIN && M <= SPITFIRE_PLL_M_MAX &&
+           vco_times_n >= (int64_t)(n1 + 2) * SPITFIRE_VCO_MIN_HZ &&
+           vco_times_n <= (int64_t)(n1 + 2) * SPITFIRE_VCO_MAX_HZ;
+}
+
+static void SpitfireCalcClock(long freq, unsigned int *mdiv,
+			   unsigned int *ndiv, unsigned int *r)
+{
+    const int64_t want = (int64_t)freq * 1000;
+    /* Fallback: the chip's power-on value for clock 0, EX08/EX09 = 42 53,
+       25.227 MHz */
+    unsigned int best_m = 0x42, best_n1 = 19, best_n2 = 1;
+    int64_t best_err = -1, best_den = 1;
+    unsigned int n1, n2;
+
+    for (n2 = 0; n2 <= 3; n2++) {
+        for (n1 = 1; n1 <= 63; n1++) {
+            int64_t d  = (int64_t)(n1 + 2) << n2;
+            int64_t lo = want * d / SPITFIRE_XTAL_HZ;  /* ideal M, rounded down */
+            unsigned int cand[2];
+            int c, ncand = 0;
+
+            if (lo >= SPITFIRE_PLL_M_MAX) {
+                cand[ncand++] = SPITFIRE_PLL_M_MAX;
+            } else {
+                cand[ncand++] = SpitfirePLLMultBelow((unsigned int)lo);
+                cand[ncand++] = SpitfirePLLMultAbove((unsigned int)lo + 1);
+            }
+
+            for (c = 0; c < ncand; c++) {
+                unsigned int M = cand[c];
+                int64_t err;
+
+                if (!SpitfirePLLUsable(M, n1))
+                    continue;
+                err = want * d - SPITFIRE_XTAL_HZ * M;
+                if (err < 0)
+                    err = -err;
+
+                /* err/d < best_err/best_den, cross-multiplied */
+                if (best_err < 0 || err * best_den < best_err * d) {
+                    best_err = err;
+                    best_den = d;
+                    best_m   = M - 8;
+                    best_n1  = n1;
+                    best_n2  = n2;
+                }
+            }
+        }
+    }
+
+    if (best_err < 0)
+        ErrorF("invalid frequency %ld kHz\n", freq);
 
     *ndiv = best_n1;
     *r = best_n2;
@@ -1866,10 +2003,8 @@ static void SpitfireSave(ScrnInfoPtr pScrn)
         /* Save previous clock settings. The 64111 selects one of four clock settings 
          * via OR06, and the actual programmings are done in EX08/EX09 for clock 0,
          * EX0A/EX0B for clock 1, EX0C/EX0D for clock 2, and EX0E/EX0F for clock 3.
-         * On POST, clock 0 through 2 have VGA legacy values, so we are free to 
-         * manipulate clock 3. */
-        EX_INB(save->EX0C, 0x0c);
-        EX_INB(save->EX0D, 0x0d);
+         * Clocks 0 through 2 keep the values the chip has on power-up, and are
+         * never written; only clock 3 is manipulated. */
         EX_INB(save->EX0E, 0x0e);
         EX_INB(save->EX0F, 0x0f);
 
@@ -1923,9 +2058,8 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
         EX_OUTB(restore->EX03, 0x03);
         EX_OUTB(restore->EX07, 0x07);
 
-        /* Program clock frequency */
-        EX_OUTB(restore->EX0C, 0x0c);
-        EX_OUTB(restore->EX0D, 0x0d);
+        /* Program clock frequency. Only clock 3: EX0C/EX0D (clock 2) are
+           left at their power-up value, see SpitfireModeInit. */
         EX_OUTB(restore->EX0E, 0x0e);
         EX_OUTB(restore->EX0F, 0x0f);
     }
