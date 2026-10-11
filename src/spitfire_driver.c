@@ -1299,7 +1299,9 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
             new->OR21 |= 0x40;
             new->OR38 = 0x05 | 0x20;
             new->OR20 = 0xC6;
-            new->EX30 = 0x22;
+            /* DAC in XRGB1555, as the BIOS in its 15-bit modes. 0x22 is
+               RGB565, and shows the 15-bit colors wrong. */
+            new->EX30 = 0x11;
             break;
         case 16:
             new->OR21 |= 0x40;
