@@ -1315,7 +1315,12 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR03 = 0x00;
         new->OR04 = 0x60;
         new->OR0F = 0x80;
-        new->OR10 = 0x55;
+        /* Local bus control. Bit 2 is a wait state on memory writes; the
+           BIOS sets it, OAK's Windows 95 driver clears it (option
+           WriteCache), and so does the KMS driver: CPU writes into video
+           memory 21-22 % faster, with no errors in long write and
+           read-back tests at 8, 16, 24 and 32 bpp (2026-10-10). */
+        new->OR10 = 0x51;
         new->OR13 = 0xC0; /* Enable 16-bit memory (0x80) and I/O (0x40) access */
         new->OR14 = 0x0C | 0x1; /* Memory mapping, enable linear framebuffer */
         new->OR21 = 0x0C; /* Mode Select, common bits (see below) */
