@@ -92,8 +92,19 @@
  */
 #define SPITFIRE_MCLK_SLOW_M    0x5c    /* 59.66 MHz */
 #define SPITFIRE_MCLK_FAST_M    0x67    /* 66.22 MHz */
-#define SPITFIRE_MCLK_N         0x16
+#define SPITFIRE_MCLK_N         0x16    /* f = 14.31818 MHz * (m + 8) / 24 */
 #define SPITFIRE_MCLK_FAST_BW   150000  /* kB/s */
+
+/*
+ * Memory clock class of the board, OAK 0x09 bits 6-5: read-only, loaded at
+ * reset from pull resistors on the MD lines. The BIOS programs 80.0, 70.99
+ * or 65.0 MHz for classes 0-2 (table at 0x7e36 of the ROM), and for class
+ * 3 leaves EX02 alone (OAK's Windows 95 panel calls it 76 MHz). It is the
+ * speed the board maker rated the memory for, so the driver never goes
+ * above it; it is not a safe speed either: the test card is class 1 and
+ * loses writes at 70.99 MHz. 0 means no limit.
+ */
+static const unsigned int SpitfireMclkClassKHz[4] = { 80000, 70990, 65000, 0 };
 
 #define PCI_VENDOR_OAK			0x104E
 /* Oak */
@@ -118,6 +129,8 @@ static void SpitfireUnmapMem(ScrnInfoPtr pScrn, int All);
 static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode);
 static void SpitfireEnableMMIO(ScrnInfoPtr pScrn);
 static void SpitfireDisableMMIO(ScrnInfoPtr pScrn);
+static unsigned int SpitfireMclkKHz(unsigned int m);
+static unsigned char SpitfireMclkLimit(unsigned int m, unsigned int max_khz);
 void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
 		       LOCO *colors, VisualPtr pVisual);
 #if 0 /* Disabled: incomplete PLL formula, see SpitfireCalcClock */
@@ -1077,14 +1090,32 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     xf86PruneDriverModes(pScrn);
 
-    if (pdrv->Chipset == OAK_64111 && !pdrv->UseBIOS) {
+    if (pdrv->Chipset == OAK_64111) {
         DisplayModePtr m = pScrn->modes;
+        unsigned char or09;
+        unsigned int max_khz;
 
-        do {
+        /* The memory clocks of SpitfireModeInit, within the class of the
+           board */
+        outb(SPITFIRE_INDEX, 0x09);
+        or09 = inb(SPITFIRE_DATA);
+        max_khz = SpitfireMclkClassKHz[(or09 >> 5) & 3];
+        pdrv->MclkSlowM = SpitfireMclkLimit(SPITFIRE_MCLK_SLOW_M, max_khz);
+        pdrv->MclkFastM = SpitfireMclkLimit(SPITFIRE_MCLK_FAST_M, max_khz);
+        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
+                   "Memory rated for %u kHz by the board (OAK 0x09 = 0x%02x, "
+                   "0: unknown); memory clocks %u and %u kHz\n", max_khz, or09,
+                   SpitfireMclkKHz(pdrv->MclkSlowM),
+                   SpitfireMclkKHz(pdrv->MclkFastM));
+
+        /* The BIOS sets its own memory clock; no modes is handled below */
+        while (m && !pdrv->UseBIOS) {
             if ((long)m->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MCLK_FAST_BW)
                 pdrv->FbUncached = TRUE;
             m = m->next;
-        } while (m && m != pScrn->modes);
+            if (m == pScrn->modes)
+                break;
+        }
         if (pdrv->FbUncached) {
             /* Mapped write-combined above; ScreenInit maps it again */
             SpitfireUnmapMem(pScrn, 0);
@@ -1167,6 +1198,25 @@ static int SpitfireGetRefresh(DisplayModePtr mode)
     if (mode->VScan > 1)
         refresh /= mode->VScan;
     return refresh;
+}
+
+/* Memory clock in kHz for an EX02 value, with EX03 = SPITFIRE_MCLK_N */
+static unsigned int SpitfireMclkKHz(unsigned int m)
+{
+    return (unsigned int)(14318180ULL * (m + 8) / (24 * 1000));
+}
+
+/*
+ * Highest EX02 value not above m whose clock fits under max_khz (0: any).
+ * The multiplier m + 8 must be realizable by the 8/9 prescaler of the PLL
+ * (see SpitfireCalcClock): with q = M / 8 and r = M % 8, r <= q.
+ */
+static unsigned char SpitfireMclkLimit(unsigned int m, unsigned int max_khz)
+{
+    while (max_khz && m > 0 &&
+           (((m + 8) & 7) > ((m + 8) >> 3) || SpitfireMclkKHz(m) > max_khz))
+        m--;
+    return m;
 }
 
 static ModeStatus SpitfireCheckTimings(DisplayModePtr pMode)
@@ -1278,7 +1328,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR29 = 0x02; /* Hardware window arbitration */
         /* Memory clock for the bandwidth of the mode, see SPITFIRE_MCLK_FAST_BW */
         new->EX02 = (long)mode->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MCLK_FAST_BW ?
-                    SPITFIRE_MCLK_FAST_M : SPITFIRE_MCLK_SLOW_M;
+                    pdrv->MclkFastM : pdrv->MclkSlowM;
         new->EX03 = SPITFIRE_MCLK_N;
         new->EX07 = 0x01;
         new->MM0A = 0xa5;
