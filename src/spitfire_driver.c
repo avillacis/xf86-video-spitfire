@@ -708,14 +708,18 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
             pdrv->shadowFB = TRUE;
             pdrv->rotate = 1;
+#ifdef HAVE_XF86DISABLERANDR
             xf86DisableRandR();
+#endif
             xf86DrvMsg(pScrn->scrnIndex, X_CONFIG, 
                        "Rotating screen clockwise"
                        "- acceleration and RandR disabled\n");
         } else if(!xf86NameCmp(s, "CCW")) {
             pdrv->shadowFB = TRUE;
             pdrv->rotate = -1;
+#ifdef HAVE_XF86DISABLERANDR
             xf86DisableRandR();
+#endif
             xf86DrvMsg(pScrn->scrnIndex, X_CONFIG,
                    "Rotating screen counter clockwise"
                    " - acceleration and RandR disabled\n");
@@ -941,8 +945,11 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 #ifdef ENABLE_DDC
     SpitfireDoDDC(pScrn);
 #endif
+#if ABI_VIDEODRV_VERSION < SET_ABI_VERSION(24, 0)
+    /* Removed from ScrnInfoRec in xserver 1.20 (video ABI 24.0) */
     pScrn->maxHValue = 2048 << 3;        /* 11 bits of h_total 8-pixel units */
     pScrn->maxVValue = 2048;                /* 11 bits of v_total */
+#endif
     pScrn->virtualX = pScrn->display->virtualX;
     pScrn->virtualY = pScrn->display->virtualY;
 
