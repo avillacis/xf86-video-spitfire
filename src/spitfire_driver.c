@@ -104,6 +104,16 @@
 #define SPITFIRE_MCLK_FAST_BW   150000  /* kB/s */
 
 /*
+ * Highest bandwidth of the picture, pixel clock times bytes per pixel,
+ * that the CRTC gets from video memory in time with the memory clock at
+ * 66.22 MHz: 1280x800x16 at 60 Hz (167 MB/s) shows right, 1360x768x16
+ * (171 MB/s) flickers in the middle of the picture (measured with the KMS
+ * driver). The 64107 datasheet advertises 1024x768 in 16M colors, 195 MB/s,
+ * but with a 66 MHz memory clock it is not reached here.
+ */
+#define SPITFIRE_MAX_BANDWIDTH  167000  /* kB/s */
+
+/*
  * Memory clock class of the board, OAK 0x09 bits 6-5: read-only, loaded at
  * reset from pull resistors on the MD lines. The BIOS programs 80.0, 70.99
  * or 65.0 MHz for classes 0-2 (table at 0x7e36 of the ROM), and for class
@@ -1236,10 +1246,13 @@ static unsigned char SpitfireMclkLimit(unsigned int m, unsigned int max_khz)
     return m;
 }
 
-static ModeStatus SpitfireCheckTimings(DisplayModePtr pMode)
+static ModeStatus SpitfireCheckTimings(ScrnInfoPtr pScrn, DisplayModePtr pMode)
 {
     int vtotal = pMode->VTotal, vdisplay = pMode->VDisplay;
     int vsyncstart = pMode->VSyncStart;
+
+    if ((long)pMode->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MAX_BANDWIDTH)
+        return MODE_CLOCK_HIGH;
 
     if (pMode->HDisplay % 8)
         return MODE_H_ILLEGAL;
@@ -1286,7 +1299,7 @@ static ModeStatus SpitfireValidMode(SCRN_ARG_TYPE arg, DisplayModePtr pMode,
                                    refresh,NULL,NULL));
     }
 
-    return SpitfireCheckTimings(pMode);
+    return SpitfireCheckTimings(pScrn, pMode);
 }
 
 static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
