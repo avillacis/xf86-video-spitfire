@@ -1389,18 +1389,28 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
          * In all cases the low nibble has 0x0C with bits 0 and 1 set to 0, 
          * which leaves clock undivided. */
         new->EX31 = 0x0c; /* Required for hi-color and true-color */
+
+        /*
+         * Display FIFO level at which the CRTC takes the memory bus back
+         * (bits 3-0). The BIOS uses 4, 6 and 10 for 8, 16 and 24/32 bpp.
+         * The KMS driver uses 6 at every depth: at 32 bpp a higher level
+         * slows down the CPU writes into video memory (46 MB/s with 6, 37
+         * with 10), and 6 was checked on screen up to
+         * 1280x800x16, 800x600x32 and 1440x900x8, with the memory clocks of
+         * SPITFIRE_MCLK_FAST_BW.
+         */
+        new->OR20 = 0xC6;
+
         switch (pScrn->depth) {
         case 8:
             new->OR21 |= 0x00;
             new->OR38 = 0x02;
-            new->OR20 = 0xC4;
             new->EX30 = 0x00;
             new->EX31 = 0x2c; /* Enable 8-bit DAC */
             break;
         case 15:
             new->OR21 |= 0x40;
             new->OR38 = 0x05 | 0x20;
-            new->OR20 = 0xC6;
             /* DAC in XRGB1555, as the BIOS in its 15-bit modes. 0x22 is
                RGB565, and shows the 15-bit colors wrong. */
             new->EX30 = 0x11;
@@ -1408,13 +1418,11 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         case 16:
             new->OR21 |= 0x40;
             new->OR38 = 0x05 | 0x20;
-            new->OR20 = 0xC6;
             new->EX30 = 0x22;
             break;
         case 24:
         case 32:
             new->OR21 |= 0x20;
-            new->OR20 = 0xCA;
             new->EX30 = 0x33;
             vganew->Attribute[0x10] &= ~0x40;
             if (pScrn->bitsPerPixel == 24) {
