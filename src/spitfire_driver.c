@@ -68,6 +68,14 @@
 #define SPITFIRE_MAX_VSYNCSTART 0x7ff
 
 /*
+ * Line pitch: the CRTC offset register (CR13) holds it in units of 16 bytes
+ * in 8 bits, up to 4080 bytes. The 64107 datasheet documents a ninth bit in
+ * OAK 0x30 bit 3, not verified on the 64111 and not used. A wider pitch
+ * wraps around: Virtual 2048 at 16 bpp left CR13 at 0.
+ */
+#define SPITFIRE_MAX_PITCH      (255 << 4)      /* bytes */
+
+/*
  * Memory clock, EX02/EX03 on the 64111, with the formula of the pixel
  * clock PLL. The value of the BIOS, 6f 16, is 70.99 MHz, above the 66 MHz
  * of the 64107 datasheet, and some CPU writes into video memory are lost
@@ -1071,10 +1079,13 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         "Using minClock = %d MHz maxClock = %d MHz\n",
         clockRanges->minClock / 1000, clockRanges->maxClock / 1000);
 
-    /* Validate the screen modes. */
+    /* Validate the screen modes. The maximum pitch is in pixels; the
+       server rounds the virtual width to a multiple of 8 pixels. */
     i = xf86ValidateModes(pScrn, pScrn->monitor->Modes,
                           pScrn->display->modes, clockRanges, NULL, 
-                          256, 2048, 16,
+                          256,
+                          (SPITFIRE_MAX_PITCH * 8 / pScrn->bitsPerPixel) & ~7,
+                          16,
                           128, 2048, 
                           pScrn->virtualX, pScrn->virtualY,
                           pdrv->videoRambytes, 
