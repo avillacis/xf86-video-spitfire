@@ -1080,12 +1080,18 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         clockRanges->minClock / 1000, clockRanges->maxClock / 1000);
 
     /* Validate the screen modes. The maximum pitch is in pixels; the
-       server rounds the virtual width to a multiple of 8 pixels. */
+       server rounds the virtual width to a multiple of 8 pixels. The
+       pitch increment is in bits: CR13 counts the pitch in units of 16
+       bytes, and with a pitch that is not a multiple of 16 bytes (at 8 bpp,
+       a virtual width that is not a multiple of 16) it is truncated, and
+       the CRTC fetches the lines from where the server does not draw them
+       (Virtual 1016 at 8 bpp gave a pitch of 1016 bytes and CR13 = 0x3f,
+       1008 bytes). */
     i = xf86ValidateModes(pScrn, pScrn->monitor->Modes,
                           pScrn->display->modes, clockRanges, NULL, 
                           256,
                           (SPITFIRE_MAX_PITCH * 8 / pScrn->bitsPerPixel) & ~7,
-                          16,
+                          16 * 8,
                           128, 2048, 
                           pScrn->virtualX, pScrn->virtualY,
                           pdrv->videoRambytes, 
