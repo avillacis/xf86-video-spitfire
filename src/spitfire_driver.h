@@ -160,6 +160,7 @@ typedef struct _Spitfire {
     unsigned int        MapOffset;
     unsigned char*	FBBase;
     unsigned char*	FBStart;
+    Bool		FbUncached;	/* no write-combining, see SPITFIRE_MCLK_FAST_BW */
     CARD32 volatile *	ShadowVirtual;
 
     /* Here are all the Options */

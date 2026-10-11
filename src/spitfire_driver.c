@@ -67,6 +67,34 @@
 #define SPITFIRE_MAX_VDISPLAY   (0x3ff + 1)
 #define SPITFIRE_MAX_VSYNCSTART 0x7ff
 
+/*
+ * Memory clock, EX02/EX03 on the 64111, with the formula of the pixel
+ * clock PLL. The value of the BIOS, 6f 16, is 70.99 MHz, above the 66 MHz
+ * of the 64107 datasheet, and some CPU writes into video memory are lost
+ * at that speed (oakmemtest in init_64111; at depth 15 without
+ * acceleration, about 450 32-bit words of 131072 pixels drawn came out as
+ * zero). Measured on the card:
+ *
+ *  - 59.66 MHz (5c 16): no errors, but from about 160 MB/s on (1280x800x16
+ *    is 167 MB/s) the CRTC no longer gets its data in time and a band shows
+ *    up on screen;
+ *  - 66.22 MHz (67 16): no errors uncached, nor write-combined in bursts of
+ *    up to 32 bytes; with full 64-byte write-combined bursts, now and then
+ *    a word lands 16 KB away.
+ *
+ * So modes up to SPITFIRE_MCLK_FAST_BW (pixel clock times bytes per pixel)
+ * get 59.66 MHz, and faster ones 66.22 MHz; and if any validated mode is
+ * faster, the framebuffer is mapped without write-combining, since the
+ * server writes into it in bursts of any length. Only the multiplier
+ * changes: an intermediate frequency (changing EX02 and then EX03 to
+ * another divider) hung the card and the PCI bus. These are the values
+ * of the KMS driver, oak64111.
+ */
+#define SPITFIRE_MCLK_SLOW_M    0x5c    /* 59.66 MHz */
+#define SPITFIRE_MCLK_FAST_M    0x67    /* 66.22 MHz */
+#define SPITFIRE_MCLK_N         0x16
+#define SPITFIRE_MCLK_FAST_BW   150000  /* kB/s */
+
 #define PCI_VENDOR_OAK			0x104E
 /* Oak */
 #define PCI_CHIP_OTI107			0x0107
@@ -1049,6 +1077,23 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     xf86PruneDriverModes(pScrn);
 
+    if (pdrv->Chipset == OAK_64111 && !pdrv->UseBIOS) {
+        DisplayModePtr m = pScrn->modes;
+
+        do {
+            if ((long)m->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MCLK_FAST_BW)
+                pdrv->FbUncached = TRUE;
+            m = m->next;
+        } while (m && m != pScrn->modes);
+        if (pdrv->FbUncached) {
+            /* Mapped write-combined above; ScreenInit maps it again */
+            SpitfireUnmapMem(pScrn, 0);
+            xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+                       "Modes above %d MB/s: framebuffer mapped without "
+                       "write-combining\n", SPITFIRE_MCLK_FAST_BW / 1000);
+        }
+    }
+
     if (i == 0 || pScrn->modes == NULL) {
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "No valid modes found\n");
         SpitfireFreeRec(pScrn);
@@ -1231,8 +1276,10 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR26 = 0x09; /* 0x08 enable half clock 0x01 */
         new->OR28 = 0x0B; /* RAS-only refresh */
         new->OR29 = 0x02; /* Hardware window arbitration */
-        new->EX02 = 0x6f;
-        new->EX03 = 0x16;
+        /* Memory clock for the bandwidth of the mode, see SPITFIRE_MCLK_FAST_BW */
+        new->EX02 = (long)mode->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MCLK_FAST_BW ?
+                    SPITFIRE_MCLK_FAST_M : SPITFIRE_MCLK_SLOW_M;
+        new->EX03 = SPITFIRE_MCLK_N;
         new->EX07 = 0x01;
         new->MM0A = 0xa5;
 
@@ -1375,7 +1422,8 @@ static Bool SpitfireMapMem(ScrnInfoPtr pScrn)
         err = pci_device_map_range(pdrv->PciInfo, pdrv->FbRegion.base,
                                    pdrv->FbRegion.size,
                                    (PCI_DEV_MAP_FLAG_WRITABLE
-                                    | PCI_DEV_MAP_FLAG_WRITE_COMBINE),
+                                    | (pdrv->FbUncached ? 0 :
+                                       PCI_DEV_MAP_FLAG_WRITE_COMBINE)),
                                    & pdrv->FbRegion.memory);
 #else
         pdrv->FbRegion.memory = 
@@ -2114,8 +2162,15 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
     vgaSavePtr->MiscOutReg = (vgaSavePtr->MiscOutReg & 0xF3) | ((restore->OR06 &0x03) << 2);
 
     if (pdrv->Chipset == OAK_64111) {
+        unsigned char ex02;
+
+        /* The sequencer is in reset (vgaHWProtect): nothing uses the
+           memory while the memory clock PLL locks again */
+        EX_INB(ex02, 0x02);
         EX_OUTB(restore->EX02, 0x02);
         EX_OUTB(restore->EX03, 0x03);
+        if (ex02 != restore->EX02)
+            usleep(20000);
         EX_OUTB(restore->EX07, 0x07);
 
         /* Program clock frequency. Only clock 3: EX0C/EX0D (clock 2) are
