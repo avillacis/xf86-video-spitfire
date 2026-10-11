@@ -51,6 +51,22 @@
 #define SPITFIRE_VERSION_CURRENT ((SPITFIRE_VERSION_MAJOR << 24) | \
                              (SPITFIRE_VERSION_MINOR << 16) | SPITFIRE_PATCHLEVEL)
 
+/*
+ * Widths of the CRTC timing registers. The horizontal ones have no
+ * extension bits: CR00 holds htotal / 8 - 5, CR01 hdisplay / 8 - 1 and CR04
+ * hsync_start / 8, 8 bits each. Vertically, OAK 0x30 adds bit 10 to the
+ * total (vtotal - 2), the blank start and the retrace start, but not to the
+ * display end (vdisplay - 1), which stays at 10 bits. In an interlaced mode
+ * the vertical registers hold the values of a field (INTERLACE_HALVE_V), in
+ * a double scan mode twice the values of the mode.
+ */
+#define SPITFIRE_MAX_HTOTAL     ((255 + 5) * 8)
+#define SPITFIRE_MAX_HDISPLAY   (256 * 8)
+#define SPITFIRE_MAX_HSYNCSTART (255 * 8)
+#define SPITFIRE_MAX_VTOTAL     (0x7ff + 2)
+#define SPITFIRE_MAX_VDISPLAY   (0x3ff + 1)
+#define SPITFIRE_MAX_VSYNCSTART 0x7ff
+
 #define PCI_VENDOR_OAK			0x104E
 /* Oak */
 #define PCI_CHIP_OTI107			0x0107
@@ -946,9 +962,10 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     SpitfireDoDDC(pScrn);
 #endif
 #if ABI_VIDEODRV_VERSION < SET_ABI_VERSION(24, 0)
-    /* Removed from ScrnInfoRec in xserver 1.20 (video ABI 24.0) */
-    pScrn->maxHValue = 2048 << 3;        /* 11 bits of h_total 8-pixel units */
-    pScrn->maxVValue = 2048;                /* 11 bits of v_total */
+    /* Removed from ScrnInfoRec in xserver 1.20 (video ABI 24.0); the
+       limits are also checked by SpitfireCheckTimings() */
+    pScrn->maxHValue = SPITFIRE_MAX_HTOTAL;
+    pScrn->maxVValue = SPITFIRE_MAX_VTOTAL;
 #endif
     pScrn->virtualX = pScrn->display->virtualX;
     pScrn->virtualY = pScrn->display->virtualY;
@@ -1107,6 +1124,40 @@ static int SpitfireGetRefresh(DisplayModePtr mode)
     return refresh;
 }
 
+static ModeStatus SpitfireCheckTimings(DisplayModePtr pMode)
+{
+    int vtotal = pMode->VTotal, vdisplay = pMode->VDisplay;
+    int vsyncstart = pMode->VSyncStart;
+
+    if (pMode->HDisplay % 8)
+        return MODE_H_ILLEGAL;
+    if (pMode->HTotal > SPITFIRE_MAX_HTOTAL ||
+        pMode->HDisplay > SPITFIRE_MAX_HDISPLAY ||
+        pMode->HSyncStart > SPITFIRE_MAX_HSYNCSTART)
+        return MODE_BAD_HVALUE;
+
+    if (pMode->Flags & V_INTERLACE) {
+        vtotal /= 2;
+        vdisplay /= 2;
+        vsyncstart /= 2;
+    }
+    if (pMode->Flags & V_DBLSCAN) {
+        vtotal *= 2;
+        vdisplay *= 2;
+        vsyncstart *= 2;
+    }
+    if (pMode->VScan > 1) {
+        vtotal *= pMode->VScan;
+        vdisplay *= pMode->VScan;
+        vsyncstart *= pMode->VScan;
+    }
+    if (vtotal > SPITFIRE_MAX_VTOTAL || vdisplay > SPITFIRE_MAX_VDISPLAY ||
+        vsyncstart > SPITFIRE_MAX_VSYNCSTART)
+        return MODE_BAD_VVALUE;
+
+    return MODE_OK;
+}
+
 static ModeStatus SpitfireValidMode(SCRN_ARG_TYPE arg, DisplayModePtr pMode,
                                   Bool verbose, int flags)
 {
@@ -1123,7 +1174,7 @@ static ModeStatus SpitfireValidMode(SCRN_ARG_TYPE arg, DisplayModePtr pMode,
                                    refresh,NULL,NULL));
     }
 
-    return MODE_OK;
+    return SpitfireCheckTimings(pMode);
 }
 
 static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
