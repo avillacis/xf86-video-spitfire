@@ -1343,6 +1343,16 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         SpitfirePrintRegs(pScrn);
     }
 
+    /*
+     * Interlaced modes: xf86SetCrtcForModes(INTERLACE_HALVE_V) already
+     * halved the vertical timings to those of a field, which the CRTC
+     * counts, and made the field total odd. The chip adds the half line
+     * of the odd field itself (see OR32 below), so the field total is half
+     * that of the frame, as in the BIOS and the KMS driver (560 for 1121).
+     */
+    if (mode->Flags & V_INTERLACE)
+        mode->CrtcVTotal = mode->VTotal / 2;
+
     if (!vgaHWInit(pScrn, mode))
         return FALSE;
 
@@ -1394,16 +1404,6 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->EX07 = 0x01;
         new->MM0A = 0xa5;
 
-        if (mode->Flags & V_INTERLACE ) {
-            if (!mode->CrtcVAdjusted) {
-                mode->CrtcVTotal >>= 1;
-                mode->CrtcVDisplay >>= 1;
-                mode->CrtcVSyncStart >>= 1;
-                mode->CrtcVSyncEnd >>= 1;
-                mode->CrtcVAdjusted = TRUE;
-            }
-        }
-
         /* Program selected clock index */
         if (pdrv->Chipset == OAK_64111) {
             unsigned int m, n, r;
@@ -1442,8 +1442,18 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR31 = 0; /* CRT Start Address High */
         new->OR33 = 0;
 
-        /* HSYNC/2 Start */
-        new->OR32 = (mode->Flags & V_INTERLACE) ? (mode->CrtcVTotal >> 3) : 0;
+        /*
+         * Retrace start of the odd field in interlaced modes, in characters
+         * (the 64107 datasheet calls it HSYNC/2 Start). The retrace of the
+         * even field begins at the end of the visible part of the line, that
+         * of the odd field at character OR32 of the next line (measured with
+         * init_64111/oakinterlace --barrido in 1280x1024i and 1024x768i), so
+         * half a line apart takes hdisplay/8 - htotal/16. The BIOS writes
+         * 0x4f in its 1280x1024 mode at 87 Hz, which leaves the fields 0.59
+         * lines apart; the formula gives 0x39.
+         */
+        new->OR32 = (mode->Flags & V_INTERLACE) ?
+                    (mode->CrtcHDisplay >> 3) - (mode->CrtcHTotal >> 4) : 0;
 
         pitch = (pScrn->displayWidth * (pScrn->bitsPerPixel / 8)) >> 4;
         vganew->CRTC[0x13] = pitch & 0xff;
