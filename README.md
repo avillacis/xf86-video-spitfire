@@ -16,6 +16,8 @@ OTI-64107 video card, its immediate prececessor. Therefore the implemented suppo
 capabilities of this video card.
 
 This driver supports:
+* bringing the 64111 up without its video BIOS, as a secondary card that the system firmware never initialized
+  (Option "InitBIOS" runs the BIOS through int10 instead)
 * basic modesetting exercised at 8, 16, 24 and 32 bpp
 * continuous pixel clock setting up to 135 MHz
 * minimal XAA/EXA acceleration for bitblt and pattern fill (XAA only, now deprecated in Xorg) operations within video memory.

@@ -169,6 +169,8 @@ static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL);
 static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL);
 static void SpitfireSave(ScrnInfoPtr pScrn);
 static void SpitfireFixVGAClock(ScrnInfoPtr pScrn);
+static Bool SpitfireHWInit(ScrnInfoPtr pScrn);
+static void SpitfireQuietHW(ScrnInfoPtr pScrn);
 static void SpitfirePrintRegs(ScrnInfoPtr pScrn);
 static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr, SpitfireRegPtr, Bool);
 
@@ -893,8 +895,14 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     xf86DrvMsg(pScrn->scrnIndex, from, "%ssing video BIOS to set modes\n",
         pdrv->UseBIOS ? "U" : "Not u" );
 
+    /*
+     * The 64111 is brought up by the driver itself (SpitfireHWInit), as the
+     * KMS driver does: the BIOS soft-boot through int10 needs the emulator,
+     * and leaves Misc Output from the previous user (see SpitfireVGAClock).
+     * The BIOS is still used to set modes (UseBIOS) and for the 64107.
+     */
     from = X_DEFAULT;
-    pdrv->InitBIOS = TRUE;
+    pdrv->InitBIOS = pdrv->UseBIOS || pdrv->Chipset != OAK_64111;
     if (!pdrv->UseBIOS) {
         if (xf86GetOptValBool(pdrv->Options, OPTION_INIT_BIOS, &pdrv->InitBIOS) )
             from = X_CONFIG;
@@ -1002,6 +1010,24 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         if (pdrv->pVbe) vbeFree(pdrv->pVbe);
         pdrv->pVbe = NULL;
         return FALSE;
+    }
+
+    if (pdrv->Chipset == OAK_64111) {
+        if (!pdrv->InitBIOS) {
+            /*
+             * The state the previous user of the card left (a text console,
+             * the KMS driver's mode, a cold card), saved before anything is
+             * touched: it is what the server restores when it leaves the VT
+             * or exits. ScreenInit does not save it again.
+             */
+            SpitfireSave(pScrn);
+            pdrv->SavedBeforeInit = TRUE;
+            if (!SpitfireHWInit(pScrn)) {
+                SpitfireFreeRec(pScrn);
+                return FALSE;
+            }
+        }
+        SpitfireQuietHW(pScrn);
     }
 
     {
@@ -2042,7 +2068,10 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
     if (!SpitfireMapMem(pScrn))
         return FALSE;
 
-    SpitfireSave(pScrn);
+    /* Already saved in PreInit, before SpitfireHWInit */
+    if (!pdrv->SavedBeforeInit)
+        SpitfireSave(pScrn);
+    pdrv->SavedBeforeInit = FALSE;
 
     vgaHWBlankScreen(pScrn, TRUE);
 
@@ -2269,6 +2298,289 @@ static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL)
 
     SpitfireWriteMode(pScrn, vgaSavePtr, SpitfireSavePtr, FALSE);
     SpitfireDisableMMIO(pScrn);
+}
+
+/* ------------------------------------------------------------------ */
+/* Bringing the 64111 up without the video BIOS                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The state in which the video BIOS POST leaves the OAK extended registers,
+ * as the KMS driver (oak64111) writes it. Left out: 0x02 (the memory size,
+ * set by the detection), 0xf5 (the I/O BAR) and 0xf1 (DRAM timing), written
+ * separately. The registers of a mode are written again by every mode set.
+ */
+static const struct {
+    unsigned char index, value;
+} SpitfirePostState[] = {
+    { 0x03, 0x10 },     /* bus control 2 */
+    { 0x04, 0x20 },     /* memory interface */
+    { 0x0e, 0x09 },     /* memory access mode */
+    { 0x0f, 0x00 },     /* mode control */
+    { 0x10, 0x55 },     /* local bus control */
+    { 0x13, 0xc0 },     /* 16-bit memory and I/O accesses */
+    { 0x14, 0x0c },     /* video memory mapping, linear framebuffer off */
+    { 0x15, 0x40 },     /* respond to graphics memory, not to MMIO */
+    { 0x20, 0xc4 },     /* FIFO depth */
+    { 0x21, 0x00 },     /* mode select: planar VGA */
+    { 0x22, 0x00 },     /* feature select */
+    { 0x25, 0x00 },     /* common read/write segment */
+    { 0x26, 0x09 },     /* half clock / clock control */
+    { 0x28, 0x0b },     /* RAS-only refresh */
+    { 0x29, 0x02 },     /* hardware window arbitration */
+    { 0x30, 0x00 },     /* CRT overflow */
+    { 0x31, 0x00 },     /* CRT start address high */
+    { 0x32, 0x00 },     /* HSYNC/2 start */
+    { 0x33, 0x01 },     /* CRT address compatibility: VGA addressing */
+    { 0x38, 0x00 },     /* pixel interface */
+    { 0x39, 0x00 },     /* acceleration control */
+    { 0x3a, 0x00 },     /* acceleration control 2 */
+    { 0xf2, 0x00 },     /* DRAM timing */
+    { 0xf3, 0x10 },     /* memory configuration */
+    { 0xf7, 0x00 },     /* DMA / transfer control */
+};
+
+/*
+ * The EX registers after the POST. The memory clock is the slow one of
+ * SPITFIRE_MCLK_N; every mode set programs the one the mode needs.
+ */
+static const struct {
+    unsigned char index, value;
+} SpitfireExPostState[] = {
+    { 0x00, 0x00 },
+    { 0x01, 0x00 },
+    { 0x02, SPITFIRE_MCLK_SLOW_M },
+    { 0x03, SPITFIRE_MCLK_N },
+    { 0x07, 0x01 },     /* clock source select */
+    { 0x30, 0x00 },     /* hi-color / true-color off */
+    { 0x31, 0x0c },     /* DAC width */
+    { 0x32, 0x00 },
+};
+
+/*
+ * Pixel clocks 0-2 (EX08/09, EX0A/0B, EX0C/0D) at power-on: 25.227, 28.278
+ * and 36.153 MHz. Neither the BIOS nor the drivers write them, and the VGA
+ * modes depend on clocks 0 and 1 (see SpitfireVGAClock); an older version
+ * of this driver wrote clock 2, so a previous user may have changed them.
+ */
+static const unsigned char SpitfireClockReset[6] = { 0x42, 0x53, 0x47, 0x52, 0x5d, 0x52 };
+
+/*
+ * Measures the installed video memory by walking the framebuffer window in
+ * 256 KB steps, as the KMS driver: at each step it checks that the
+ * signature just written reads back (there is memory) and that the
+ * reference signature at offset 0 is intact (the address is not an alias:
+ * a 2 MB card repeats its memory every 2 MB). Right after power-on the DRAM
+ * needs a few refresh cycles first: a write/read pass over the window, and
+ * a few attempts. Returns the size in bytes, 0 if the memory does not
+ * answer.
+ */
+static unsigned long SpitfireDetectVRAM(ScrnInfoPtr pScrn)
+{
+#ifdef XSERVER_LIBPCIACCESS
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    const unsigned long step = 256 * 1024;
+    const CARD32 ref = 0xa5000000;
+    unsigned long window = pdrv->PciInfo->regions[1].size, off, found = 0;
+    unsigned char s02, s0f, s14, s15, s21, s22, s25, s33, s38;
+    volatile CARD32 *fb;
+    void *map;
+    int attempt;
+
+    if (pci_device_map_range(pdrv->PciInfo, pdrv->FbRegion.base, window,
+                             PCI_DEV_MAP_FLAG_WRITABLE, &map))
+        return 0;
+    fb = map;
+
+    outb(SPITFIRE_INDEX, 0x02); s02 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x0f); s0f = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x14); s14 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x15); s15 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x21); s21 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x22); s22 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x25); s25 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x33); s33 = inb(SPITFIRE_DATA);
+    outb(SPITFIRE_INDEX, 0x38); s38 = inb(SPITFIRE_DATA);
+
+    /* Memory seen linearly, from one end to the other */
+    OTI_OUTB(0x0c, 0x21);               /* mode select: extended linear */
+    OTI_OUTB(0x00, 0x33);               /* extended CRT addressing */
+    OTI_OUTB(0x02, 0x38);               /* 8-bit pixel interface */
+    OTI_OUTB(0x80, 0x0f);
+    OTI_OUTB(0x6c, 0x22);               /* feature select */
+    OTI_OUTB(0x00, 0x25);
+    OTI_OUTB(s02 | 0x0e, 0x02);         /* largest size, not to limit the walk */
+    OTI_OUTB(s15 | 0xc0, 0x15);
+    OTI_OUTB(s14 | 0x01, 0x14);
+
+    for (attempt = 0; attempt < 4; attempt++) {
+        for (off = 0; off < window; off += step) {
+            fb[off / 4] = 0;
+            (void)fb[off / 4];
+        }
+
+        found = 0;
+        fb[0] = ref;
+        if (fb[0] != ref) {
+            usleep(20000);
+            continue;           /* the memory does not answer yet */
+        }
+        found = step;
+
+        for (off = step; off < window; off += step) {
+            CARD32 sig = 0x5a000000 | off;
+
+            fb[off / 4] = sig;
+            if (fb[off / 4] != sig)
+                break;          /* nothing at that address */
+            if (fb[0] != ref)
+                break;          /* alias of offset 0 */
+            found = off + step;
+        }
+        if (found > step)
+            break;              /* believable result */
+        usleep(20000);
+    }
+
+    OTI_OUTB(s38, 0x38);
+    OTI_OUTB(s33, 0x33);
+    OTI_OUTB(s25, 0x25);
+    OTI_OUTB(s22, 0x22);
+    OTI_OUTB(s21, 0x21);
+    OTI_OUTB(s0f, 0x0f);
+    OTI_OUTB(s14, 0x14);
+    OTI_OUTB(s15, 0x15);
+    OTI_OUTB(s02, 0x02);
+
+    pci_device_unmap_range(pdrv->PciInfo, map, window);
+    return found;
+#else
+    return 0;
+#endif
+}
+
+/*
+ * Brings the 64111 up without the video BIOS, doing what its POST does, as
+ * the KMS driver (oak64111_drv.c, oak_hw_init): every register it relies on
+ * is written, none is taken from the power-on state, since a previous user
+ * (a BIOS, the KMS driver, a test program, an older version of this driver)
+ * may have left any of them otherwise. The exception is the DRAM timing,
+ * OAK 0xf1, which is kept unless it is 0: on the test card it is 0x94 from
+ * power-on, the value the KMS driver writes, and another board or its BIOS
+ * may set its own.
+ */
+static Bool SpitfireHWInit(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    unsigned char f1, clk[6], st02;
+    unsigned long vram;
+    unsigned int i, field;
+    Bool clocks_changed = FALSE;
+
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Initializing the card without the video BIOS\n");
+
+    /* The POST keeps the high byte of the I/O BAR here; the BIOS uses it */
+    OTI_OUTB((pdrv->extIOBase >> 8) & 0xff, 0xf5);
+
+    for (i = 0; i < sizeof(SpitfirePostState) / sizeof(SpitfirePostState[0]); i++)
+        OTI_OUTB(SpitfirePostState[i].value, SpitfirePostState[i].index);
+
+    /*
+     * The clock generator, with the sequencer in reset so that nothing uses
+     * the memory while the memory clock PLL relocks. Only the multiplier of
+     * the memory clock changes (see SPITFIRE_MCLK_N).
+     */
+    outb(0x3c4, 0x00);
+    outb(0x3c5, 0x01);
+    for (i = 0; i < 6; i++) {
+        EX_INB(clk[i], 0x08 + i);
+        if (clk[i] != SpitfireClockReset[i])
+            clocks_changed = TRUE;
+    }
+    if (clocks_changed) {
+        xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+                   "Pixel clocks 0-2 were %02x %02x, %02x %02x, %02x %02x: "
+                   "back to their power-on values\n",
+                   clk[0], clk[1], clk[2], clk[3], clk[4], clk[5]);
+        for (i = 0; i < 6; i++)
+            EX_OUTB(SpitfireClockReset[i], 0x08 + i);
+    }
+    for (i = 0; i < sizeof(SpitfireExPostState) / sizeof(SpitfireExPostState[0]); i++)
+        EX_OUTB(SpitfireExPostState[i].value, SpitfireExPostState[i].index);
+    usleep(20000);
+
+    /*
+     * On power-on Misc Output and SR00 are 0: CPU access to video memory off
+     * and the sequencer in reset. 0x67 is what the POST leaves: RAM access,
+     * CRTC at 0x3dx, pixel clock 1. OAK 0x06 latches the clock with a pulse
+     * of bit 7; bit 5 keeps the overlay windows off.
+     */
+    outb(0x3c2, 0x67);
+    outb(0x3c4, 0x01); outb(0x3c5, 0x01);
+    outb(0x3c4, 0x02); outb(0x3c5, 0x0f);
+    outb(0x3c4, 0x03); outb(0x3c5, 0x00);
+    outb(0x3c4, 0x04); outb(0x3c5, 0x0e);
+    outb(0x3c4, 0x00); outb(0x3c5, 0x03);
+    OTI_OUTB(0xe1, SPITFIRE_CLOCKSEL);
+    OTI_OUTB(0x61, SPITFIRE_CLOCKSEL);
+
+    outb(SPITFIRE_INDEX, 0xf1);
+    f1 = inb(SPITFIRE_DATA);
+    if (f1) {
+        xf86DrvMsg(pScrn->scrnIndex, X_INFO, "DRAM timing (OAK 0xf1) 0x%02x, kept\n", f1);
+    } else {
+        f1 = 0x94;
+        OTI_OUTB(f1, 0xf1);
+        xf86DrvMsg(pScrn->scrnIndex, X_INFO, "DRAM timing (OAK 0xf1) was 0: 0x%02x\n", f1);
+    }
+
+    vram = SpitfireDetectVRAM(pScrn);
+    if (!vram) {
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+                   "The video memory does not respond; try Option \"InitBIOS\"\n");
+        return FALSE;
+    }
+    for (field = 0; field < 7; field++)
+        if ((256UL * 1024 << field) >= vram)
+            break;
+    outb(SPITFIRE_INDEX, 0x02);
+    st02 = inb(SPITFIRE_DATA);
+    OTI_OUTB((st02 & ~0x0e) | (field << 1), 0x02);
+    xf86DrvMsg(pScrn->scrnIndex, X_PROBED, "Video memory: %lu KB\n", vram / 1024);
+
+    /* Pixel mask to all ones, and OAK 0xf1 bit 4, which enables it */
+    outb(0x3c6, 0xff);
+    OTI_OUTB(f1 | 0x10, 0xf1);
+
+    /* MMIO, graphics memory and the linear framebuffer on */
+    outb(SPITFIRE_INDEX, SPITFIRE_MEM_MAP_ENABLE);
+    OTI_OUTB(inb(SPITFIRE_DATA) | 0xc0, SPITFIRE_MEM_MAP_ENABLE);
+    outb(SPITFIRE_INDEX, SPITFIRE_VIDMEM_MAP);
+    OTI_OUTB(inb(SPITFIRE_DATA) | 0x01, SPITFIRE_VIDMEM_MAP);
+
+    /* No mode yet: screen and sync signals off until the first mode set */
+    outb(0x3c4, 0x01);
+    outb(0x3c5, inb(0x3c5) | 0x20);
+    outb(SPITFIRE_INDEX, SPITFIRE_DPMS);
+    OTI_OUTB(inb(SPITFIRE_DATA) | 0x03, SPITFIRE_DPMS);
+
+    return TRUE;
+}
+
+/*
+ * The hardware cursor (MMIO 0x80-0x97) and the two video overlay windows
+ * (MMIO 0xb0-0xdd) are not used by this driver, but a previous user (the
+ * KMS driver, a test program) may have left them on over the picture.
+ */
+static void SpitfireQuietHW(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    volatile unsigned char *mmio = SPITFIRE_MMIO;
+
+    mmio[0x94] = 0x14;          /* cursor off */
+    mmio[0x96] = 0x00;
+    mmio[0xbe] = 0x00;          /* window 0 off (bit 7) */
+    mmio[0xce] = 0x00;          /* window 1 off (bit 7) */
 }
 
 /*

@@ -174,6 +174,7 @@ typedef struct _Spitfire {
     Bool			UseBIOS;
     Bool			InitBIOS;
     Bool			DumpRegs;
+    Bool			SavedBeforeInit;	/* see SpitfireHWInit() */
     int				rotate;
 
     CloseScreenProcPtr	CloseScreen;
