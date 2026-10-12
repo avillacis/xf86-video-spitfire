@@ -85,6 +85,11 @@ AC_CHECK_DECL(pci_device_enable,
 	      [AC_DEFINE(HAVE_PCI_DEVICE_ENABLE, 1, [Have pci_device_enable prototype])],
 	      [],
 	      [#include <pciaccess.h>])
+AC_CHECK_DECL(pci_device_has_kernel_driver,
+	      [AC_DEFINE(HAVE_PCI_DEVICE_HAS_KERNEL_DRIVER, 1,
+			 [Have pci_device_has_kernel_driver prototype])],
+	      [],
+	      [#include <pciaccess.h>])
 # xf86DisableRandR() was removed from the server in 1.20
 AC_CHECK_DECL(xf86DisableRandR,
 	      [AC_DEFINE(HAVE_XF86DISABLERANDR, 1, [Have xf86DisableRandR prototype])],

@@ -361,6 +361,45 @@ static void SpitfireIdentify(int flags)
 
 /* Probe functions */
 #ifdef XSERVER_LIBPCIACCESS
+/*
+ * A card bound to a kernel driver (the KMS driver, oak64111) belongs to it.
+ * This driver programs the card directly, and both would fight over the
+ * registers: the KMS driver keeps the VGA arbiter lock for its accesses,
+ * reads the scanline counter for its VBLANK timer and sets its own modes.
+ * The card is left alone then, and the server's modesetting driver can
+ * drive it through the kernel (Driver "modesetting"); unloading the kernel
+ * driver gives it back to this one.
+ */
+static Bool SpitfireKernelOwned(struct pci_device *dev)
+{
+#ifdef HAVE_PCI_DEVICE_HAS_KERNEL_DRIVER
+    const char *name = "unknown";
+#ifdef __linux__
+    char path[64], link[256];
+    ssize_t n;
+#endif
+
+    if (!pci_device_has_kernel_driver(dev))
+        return FALSE;
+#ifdef __linux__
+    snprintf(path, sizeof(path), "/sys/bus/pci/devices/%04x:%02x:%02x.%u/driver",
+             dev->domain, dev->bus, dev->dev, dev->func);
+    n = readlink(path, link, sizeof(link) - 1);
+    if (n > 0) {
+        link[n] = '\0';
+        name = strrchr(link, '/') ? strrchr(link, '/') + 1 : link;
+    }
+#endif
+    xf86Msg(X_WARNING, "%s: %04x:%02x:%02x.%u is driven by the kernel driver %s; "
+            "not using it. Use the modesetting driver, or unload the kernel "
+            "driver to use this one.\n", SPITFIRE_NAME,
+            dev->domain, dev->bus, dev->dev, dev->func, name);
+    return TRUE;
+#else
+    return FALSE;
+#endif
+}
+
 static Bool SpitfirePciProbe(DriverPtr drv, int entity_num,
                            struct pci_device *dev, intptr_t match_data)
 {
@@ -369,6 +408,9 @@ static Bool SpitfirePciProbe(DriverPtr drv, int entity_num,
     if ((match_data < OAK_64107) || (match_data > OAK_64111)) {
         return FALSE;
     }
+
+    if (SpitfireKernelOwned(dev))
+        return FALSE;
 
     pScrn = xf86ConfigPciEntity(NULL, 0, entity_num, NULL,
             RES_SHARED_VGA, NULL, NULL, NULL, NULL);

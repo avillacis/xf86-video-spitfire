@@ -26,6 +26,11 @@ Not supported due to lack of documentation:
 * Hardware cursor
 * I2C passthrough to slave devices such as video capture
 
+If the card is bound to a kernel driver (such as the oak64111 KMS driver), this driver leaves it alone and says so in
+the log, since both would program the same registers. The server's modesetting driver can then drive the card through
+the kernel (Driver "modesetting"; when the configured driver finds no screen, Xorg also falls back to it by itself).
+Unload the kernel driver to use this one.
+
 BIG CAVEAT: in my particular setup (x86_64 with 2 Mb of video RAM in card), the 24 bpp almost always lock up the machine hard
 after some video activity (about 1 minute). I am not sure whether the cause is some subtle bug in the video setup, or a result
 of the card's age, or even the card being improperly seated in the PCI slot. Therefore, 32 bpp is highly recommended. Also, 
