@@ -1287,6 +1287,10 @@ static ModeStatus SpitfireCheckTimings(ScrnInfoPtr pScrn, DisplayModePtr pMode)
         pMode->HSyncStart > SPITFIRE_MAX_HSYNCSTART)
         return MODE_BAD_HVALUE;
 
+    /* The retrace of the odd field falls within the line (see OR32) */
+    if ((pMode->Flags & V_INTERLACE) && pMode->HDisplay * 2 <= pMode->HTotal)
+        return MODE_BAD_HVALUE;
+
     if (pMode->Flags & V_INTERLACE) {
         vtotal /= 2;
         vdisplay /= 2;
