@@ -3190,13 +3190,30 @@ static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr vgaSavePtr,
     vgaHWProtect(pScrn, FALSE);
 }
 
+/*
+ * Screen saver blanking: SR01 bit 5 (screen off), written only when it
+ * changes, and without the sequencer reset of vgaHWSaveScreen. The server
+ * calls this to unblank on every screen saver reset, blanked or not (mpv
+ * resets the screen saver every 10 s or so while it plays), and on the
+ * 64111 a sequencer reset cuts the frame short, the monitor loses sync
+ * for a moment and the screen goes dark (measured with the scanline
+ * counter, 2026-10-11); it also clears the hardware cursor control.
+ */
 static Bool SpitfireSaveScreen(ScreenPtr pScreen, int mode)
 {
     ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+    vgaHWPtr hwp = VGAHWPTR(pScrn);
+    unsigned char sr01, new;
 
     TRACE(("SpitfireSaveScreen(0x%x)\n", mode));
 
-    return vgaHWSaveScreen(pScreen, mode);
+    if (pScrn->vtSema) {
+        sr01 = hwp->readSeq(hwp, 0x01);
+        new = xf86IsUnblank(mode) ? sr01 & ~0x20 : sr01 | 0x20;
+        if (new != sr01)
+            hwp->writeSeq(hwp, 0x01, new);
+    }
+    return TRUE;
 }
 
 
