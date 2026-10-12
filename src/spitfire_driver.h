@@ -160,8 +160,9 @@ typedef struct _Spitfire {
     unsigned int        MapOffset;
     unsigned char*	FBBase;
     unsigned char*	FBStart;
-    Bool		FbUncached;	/* no write-combining, see SPITFIRE_MCLK_FAST_BW */
+    Bool		FbUncached;	/* no write-combining, see SPITFIRE_MCLK_N */
     unsigned char	MclkSlowM, MclkFastM;	/* EX02, see SpitfireMclkLimit() */
+    unsigned int	BwSlow, BwFast;		/* kB/s they feed, see SPITFIRE_BW_KBS */
     CARD32 volatile *	ShadowVirtual;
 
     /* Here are all the Options */

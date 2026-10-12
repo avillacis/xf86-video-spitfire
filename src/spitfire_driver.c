@@ -90,9 +90,9 @@
  *    up to 32 bytes; with full 64-byte write-combined bursts, now and then
  *    a word lands 16 KB away.
  *
- * So modes up to SPITFIRE_MCLK_FAST_BW (pixel clock times bytes per pixel)
- * get 59.66 MHz, and faster ones 66.22 MHz; and if any validated mode is
- * faster, the framebuffer is mapped without write-combining, since the
+ * So modes that the slow clock can feed (see SPITFIRE_BW_KBS) get 59.66
+ * MHz, and faster ones 66.22 MHz; and if any validated mode needs the fast
+ * clock, the framebuffer is mapped without write-combining, since the
  * server writes into it in bursts of any length. Only the multiplier
  * changes: an intermediate frequency (changing EX02 and then EX03 to
  * another divider) hung the card and the PCI bus. These are the values
@@ -101,17 +101,22 @@
 #define SPITFIRE_MCLK_SLOW_M    0x5c    /* 59.66 MHz */
 #define SPITFIRE_MCLK_FAST_M    0x67    /* 66.22 MHz */
 #define SPITFIRE_MCLK_N         0x16    /* f = 14.31818 MHz * (m + 8) / 24 */
-#define SPITFIRE_MCLK_FAST_BW   150000  /* kB/s */
 
 /*
- * Highest bandwidth of the picture, pixel clock times bytes per pixel,
- * that the CRTC gets from video memory in time with the memory clock at
- * 66.22 MHz: 1280x800x16 at 60 Hz (167 MB/s) shows right, 1360x768x16
+ * Bandwidth of the picture, pixel clock times bytes per pixel, that the
+ * CRTC gets from video memory in time, taken as proportional to the memory
+ * clock: SPITFIRE_BW_KBS with EX02 = SPITFIRE_MCLK_FAST_M (66.22 MHz),
+ * where 1280x800x16 at 60 Hz (167 MB/s) shows right and 1360x768x16
  * (171 MB/s) flickers in the middle of the picture (measured with the KMS
- * driver). The 64107 datasheet advertises 1024x768 in 16M colors, 195 MB/s,
- * but with a 66 MHz memory clock it is not reached here.
+ * driver). At 59.66 MHz the proportion gives 150.5 MB/s, on the safe side
+ * of what was seen there (800x600x32, 160 MB/s, right; 1280x800x16,
+ * 167 MB/s, a band). The two clocks of the driver (below the class of the
+ * board) get their bandwidths in SpitfirePreInit: a mode above that of the
+ * slow clock gets the fast one, and a mode above that of the fast clock is
+ * refused. The 64107 datasheet advertises 1024x768 in 16M colors,
+ * 195 MB/s, but with a 66 MHz memory clock it is not reached here.
  */
-#define SPITFIRE_MAX_BANDWIDTH  167000  /* kB/s */
+#define SPITFIRE_BW_KBS         167000  /* kB/s at SPITFIRE_MCLK_FAST_M */
 
 /*
  * Memory clock class of the board, OAK 0x09 bits 6-5: read-only, loaded at
@@ -149,6 +154,7 @@ static void SpitfireEnableMMIO(ScrnInfoPtr pScrn);
 static void SpitfireDisableMMIO(ScrnInfoPtr pScrn);
 static unsigned int SpitfireMclkKHz(unsigned int m);
 static unsigned char SpitfireMclkLimit(unsigned int m, unsigned int max_khz);
+static unsigned int SpitfireMclkBw(unsigned int m);
 void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
 		       LOCO *colors, VisualPtr pVisual);
 #if 0 /* Disabled: incomplete PLL formula, see SpitfireCalcClock */
@@ -1092,6 +1098,28 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         "Using minClock = %d MHz maxClock = %d MHz\n",
         clockRanges->minClock / 1000, clockRanges->maxClock / 1000);
 
+    if (pdrv->Chipset == OAK_64111) {
+        unsigned char or09;
+        unsigned int max_khz;
+
+        /* The memory clocks of SpitfireModeInit, within the class of the
+           board, and the bandwidths they feed (SpitfireCheckTimings) */
+        outb(SPITFIRE_INDEX, 0x09);
+        or09 = inb(SPITFIRE_DATA);
+        max_khz = SpitfireMclkClassKHz[(or09 >> 5) & 3];
+        pdrv->MclkSlowM = SpitfireMclkLimit(SPITFIRE_MCLK_SLOW_M, max_khz);
+        pdrv->MclkFastM = SpitfireMclkLimit(SPITFIRE_MCLK_FAST_M, max_khz);
+        pdrv->BwSlow = SpitfireMclkBw(pdrv->MclkSlowM);
+        pdrv->BwFast = SpitfireMclkBw(pdrv->MclkFastM);
+        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
+                   "Memory rated for %u kHz by the board (OAK 0x09 = 0x%02x, "
+                   "0: unknown); memory clocks %u and %u kHz, for up to %u "
+                   "and %u kB/s\n", max_khz, or09,
+                   SpitfireMclkKHz(pdrv->MclkSlowM),
+                   SpitfireMclkKHz(pdrv->MclkFastM),
+                   pdrv->BwSlow, pdrv->BwFast);
+    }
+
     /* Validate the screen modes. The maximum pitch is in pixels; the
        server rounds the virtual width to a multiple of 8 pixels. The
        pitch increment is in bits: CR13 counts the pitch in units of 16
@@ -1122,25 +1150,10 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     if (pdrv->Chipset == OAK_64111) {
         DisplayModePtr m = pScrn->modes;
-        unsigned char or09;
-        unsigned int max_khz;
-
-        /* The memory clocks of SpitfireModeInit, within the class of the
-           board */
-        outb(SPITFIRE_INDEX, 0x09);
-        or09 = inb(SPITFIRE_DATA);
-        max_khz = SpitfireMclkClassKHz[(or09 >> 5) & 3];
-        pdrv->MclkSlowM = SpitfireMclkLimit(SPITFIRE_MCLK_SLOW_M, max_khz);
-        pdrv->MclkFastM = SpitfireMclkLimit(SPITFIRE_MCLK_FAST_M, max_khz);
-        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
-                   "Memory rated for %u kHz by the board (OAK 0x09 = 0x%02x, "
-                   "0: unknown); memory clocks %u and %u kHz\n", max_khz, or09,
-                   SpitfireMclkKHz(pdrv->MclkSlowM),
-                   SpitfireMclkKHz(pdrv->MclkFastM));
 
         /* The BIOS sets its own memory clock; no modes is handled below */
         while (m && !pdrv->UseBIOS) {
-            if ((long)m->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MCLK_FAST_BW)
+            if ((long)m->Clock * (pScrn->bitsPerPixel / 8) > pdrv->BwSlow)
                 pdrv->FbUncached = TRUE;
             m = m->next;
             if (m == pScrn->modes)
@@ -1150,8 +1163,8 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
             /* Mapped write-combined above; ScreenInit maps it again */
             SpitfireUnmapMem(pScrn, 0);
             xf86DrvMsg(pScrn->scrnIndex, X_INFO,
-                       "Modes above %d MB/s: framebuffer mapped without "
-                       "write-combining\n", SPITFIRE_MCLK_FAST_BW / 1000);
+                       "Modes above %u kB/s: framebuffer mapped without "
+                       "write-combining\n", pdrv->BwSlow);
         }
     }
 
@@ -1236,6 +1249,13 @@ static unsigned int SpitfireMclkKHz(unsigned int m)
     return (unsigned int)(14318180ULL * (m + 8) / (24 * 1000));
 }
 
+/* Bandwidth in kB/s that the memory clock of an EX02 value feeds */
+static unsigned int SpitfireMclkBw(unsigned int m)
+{
+    return (unsigned int)((unsigned long long)SPITFIRE_BW_KBS * SpitfireMclkKHz(m) /
+                          SpitfireMclkKHz(SPITFIRE_MCLK_FAST_M));
+}
+
 /*
  * Highest EX02 value not above m whose clock fits under max_khz (0: any).
  * The multiplier m + 8 must be realizable by the 8/9 prescaler of the PLL
@@ -1251,10 +1271,13 @@ static unsigned char SpitfireMclkLimit(unsigned int m, unsigned int max_khz)
 
 static ModeStatus SpitfireCheckTimings(ScrnInfoPtr pScrn, DisplayModePtr pMode)
 {
+    SpitfirePtr pdrv = DEVPTR(pScrn);
     int vtotal = pMode->VTotal, vdisplay = pMode->VDisplay;
     int vsyncstart = pMode->VSyncStart;
 
-    if ((long)pMode->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MAX_BANDWIDTH)
+    /* What the fast memory clock feeds, see SPITFIRE_BW_KBS (64111 only) */
+    if (pdrv->BwFast &&
+        (long)pMode->Clock * (pScrn->bitsPerPixel / 8) > pdrv->BwFast)
         return MODE_CLOCK_HIGH;
 
     if (pMode->HDisplay % 8)
@@ -1364,8 +1387,8 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         new->OR26 = 0x09; /* 0x08 enable half clock 0x01 */
         new->OR28 = 0x0B; /* RAS-only refresh */
         new->OR29 = 0x02; /* Hardware window arbitration */
-        /* Memory clock for the bandwidth of the mode, see SPITFIRE_MCLK_FAST_BW */
-        new->EX02 = (long)mode->Clock * (pScrn->bitsPerPixel / 8) > SPITFIRE_MCLK_FAST_BW ?
+        /* Memory clock for the bandwidth of the mode, see SPITFIRE_BW_KBS */
+        new->EX02 = (long)mode->Clock * (pScrn->bitsPerPixel / 8) > pdrv->BwSlow ?
                     pdrv->MclkFastM : pdrv->MclkSlowM;
         new->EX03 = SPITFIRE_MCLK_N;
         new->EX07 = 0x01;
@@ -1452,7 +1475,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
          * slows down the CPU writes into video memory (46 MB/s with 6, 37
          * with 10), and 6 was checked on screen up to
          * 1280x800x16, 800x600x32 and 1440x900x8, with the memory clocks of
-         * SPITFIRE_MCLK_FAST_BW.
+         * SPITFIRE_BW_KBS.
          */
         new->OR20 = 0xC6;
 
