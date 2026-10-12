@@ -1425,10 +1425,18 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         }
 
 
-        /* OTI CRT Overflow */
-        new->OR30 = (((mode->CrtcVTotal - 2) & 0x400) >> 10) |  /* bit 10 of VTotal to bit 0 */
-                    (((mode->CrtcVDisplay - 1) & 0x400) >> 9) | /* bit 10 of VDisplay to bit 1 */
-                    (((mode->CrtcVSyncStart) & 0x400) >> 8) |   /* bit 10 of VSyncStart to bit 2 */
+        /*
+         * OTI CRT Overflow: bit 10 of the vertical total (bit 0), blank start
+         * (bit 1) and retrace start (bit 2), as in the 64107 datasheet; bit 1
+         * checked on the card with a 1024-line mode (init_64111/oak1280).
+         * The values are those vgaHWInit() writes in the VGA registers: the
+         * blank start is CrtcVBlankStart - 1 there, not the display end.
+         * Both give the same bit in every mode the driver accepts (at most
+         * 1024 lines, see SpitfireCheckTimings), so it is always 0.
+         */
+        new->OR30 = (((mode->CrtcVTotal - 2) & 0x400) >> 10) |
+                    (((mode->CrtcVBlankStart - 1) & 0x400) >> 9) |
+                    (((mode->CrtcVSyncStart) & 0x400) >> 8) |
                     ((mode->Flags & V_INTERLACE) ? 0x80 : 0);   /* bit 7 enables interlace */
 
         new->OR31 = 0; /* CRT Start Address High */
