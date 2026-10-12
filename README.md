@@ -21,11 +21,12 @@ This driver supports:
 * basic modesetting exercised at 8, 16, 24 and 32 bpp
 * continuous pixel clock setting up to 135 MHz
 * minimal XAA/EXA acceleration for bitblt and pattern fill (XAA only, now deprecated in Xorg) operations within video memory.
+* the 64x64 two-color hardware cursor of the 64111 (Option "HWCursor", on by default); ARGB cursors are reduced to two
+  colors (at 8 bpp, the nearest palette entries), and interlaced or double scan modes use the software cursor
 
 Not supported due to lack of documentation:
 * DDC/I2C support for EDID
 * Hardware video overlays
-* Hardware cursor
 * I2C passthrough to slave devices such as video capture
 
 If the card is bound to a kernel driver (such as the oak64111 KMS driver), this driver leaves it alone and says so in

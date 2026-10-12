@@ -59,6 +59,15 @@ This option is recommended for performance reasons when running at depths
 1 and 4, especially when using modern PCI-based hardware.  It is required
 when using those depths in a multi-head configuration where one or more
 of the other screens is operating at a different depth.
+.TP
+.BI "Option \*qHWCursor\*q \*q" boolean \*q
+Enable or disable the hardware cursor of the OTI-64111: 64x64 pixels in two
+colors, plus transparent and inverted pixels. ARGB cursors are reduced to two
+colors (by alpha and luminance); at depth 8 each is the nearest entry of the
+installed colormap, looked for again whenever the colormap changes. Interlaced
+and double scan modes always use the software cursor.
+The cursor images take the top 2 KB of video memory. Default: on for the
+OTI-64111.
 .SH "SEE ALSO"
 __xservername__(1), __xconfigfile__(__filemansuffix__), xorgconfig(1), Xserver(1), X(__miscmansuffix__)
 .SH AUTHORS

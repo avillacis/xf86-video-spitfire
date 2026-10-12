@@ -540,7 +540,7 @@ Bool SpitfireEXAInit(ScreenPtr pScreen)
     
     /* use the linear aperture */
     pdrv->EXADriverPtr->memoryBase = pdrv->FBBase + pScrn->fbOffset;
-    pdrv->EXADriverPtr->memorySize = pdrv->videoRambytes;
+    pdrv->EXADriverPtr->memorySize = pdrv->endfb;    /* below the cursor images */
     pdrv->EXADriverPtr->offScreenBase = pScrn->virtualY * pdrv->lDelta;
 
     if (pdrv->EXADriverPtr->memorySize > pdrv->EXADriverPtr->offScreenBase) {

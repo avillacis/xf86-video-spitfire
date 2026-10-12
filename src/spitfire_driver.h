@@ -175,6 +175,14 @@ typedef struct _Spitfire {
     Bool			InitBIOS;
     Bool			DumpRegs;
     Bool			SavedBeforeInit;	/* see SpitfireHWInit() */
+
+    /* Hardware cursor, see SpitfireHWCursorInit() */
+    Bool			HWCursor;
+    Bool			CursorShown;
+    unsigned long		CursorOffset;	/* two images at the top of video memory */
+    int				CursorSlot;	/* the one shown */
+    int				CursorBg, CursorFg;	/* 0xRRGGBB, or index at 8 bpp... */
+    Bool			CursorARGB;	/* ...unless the cursor is ARGB */
     int				rotate;
 
     CloseScreenProcPtr	CloseScreen;

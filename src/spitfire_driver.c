@@ -17,6 +17,8 @@
 #include "shadowfb.h"
 
 #include "mipointer.h"
+#include "cursorstr.h"
+#include "colormapst.h"
 #include "micmap.h"
 
 #include "xf86int10.h"
@@ -171,6 +173,10 @@ static void SpitfireSave(ScrnInfoPtr pScrn);
 static void SpitfireFixVGAClock(ScrnInfoPtr pScrn);
 static Bool SpitfireHWInit(ScrnInfoPtr pScrn);
 static void SpitfireQuietHW(ScrnInfoPtr pScrn);
+static Bool SpitfireHWCursorInit(ScreenPtr pScreen);
+static void SpitfireHideCursor(ScrnInfoPtr pScrn);
+static void SpitfireCursorAfterMode(ScrnInfoPtr pScrn);
+static void SpitfireWriteCursorColors(ScrnInfoPtr pScrn);
 static void SpitfirePrintRegs(ScrnInfoPtr pScrn);
 static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr, SpitfireRegPtr, Bool);
 
@@ -244,6 +250,7 @@ typedef enum {
     ,OPTION_INIT_BIOS
     ,OPTION_IGNORE_EDID
     ,OPTION_DUMP_REGS
+    ,OPTION_HW_CURSOR
 } SpitfireOpts;
 
 
@@ -257,6 +264,7 @@ static const OptionInfoRec SpitfireOptions[] =
     { OPTION_ACCELMETHOD,   "AccelMethod",  OPTV_STRING,    {0}, FALSE },
     { OPTION_INIT_BIOS,     "InitBIOS",     OPTV_BOOLEAN,   {0}, FALSE },
     { OPTION_DUMP_REGS,     "DumpRegs",     OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_HW_CURSOR,     "HWCursor",     OPTV_BOOLEAN,   {0}, FALSE },
 
     { -1,                NULL,                OPTV_NONE,    {0}, FALSE }
 };
@@ -912,6 +920,14 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
 
     from = X_DEFAULT;
     pdrv->DumpRegs = FALSE;
+    /* The hardware cursor of the 64111, see SpitfireHWCursorInit() */
+    pdrv->HWCursor = (pdrv->Chipset == OAK_64111);
+    if (xf86GetOptValBool(pdrv->Options, OPTION_HW_CURSOR, &pdrv->HWCursor))
+        xf86DrvMsg(pScrn->scrnIndex, X_CONFIG, "%s cursor\n",
+                   pdrv->HWCursor ? "Hardware" : "Software");
+    if (pdrv->Chipset != OAK_64111)
+        pdrv->HWCursor = FALSE;
+
     if (xf86GetOptValBool(pdrv->Options, OPTION_DUMP_REGS, &pdrv->DumpRegs) )
         from = X_CONFIG;
     if (pdrv->DumpRegs)
@@ -1094,6 +1110,11 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         pdrv->videoRambytes = pScrn->videoRam * 1024;
     }
     pdrv->endfb = pdrv->videoRambytes;
+    if (pdrv->HWCursor) {
+        /* Two cursor images of 1 KB at the top, out of the screen and EXA */
+        pdrv->CursorOffset = (pdrv->videoRambytes - 2 * 1024) & ~1023UL;
+        pdrv->endfb = pdrv->CursorOffset;
+    }
 #ifdef ENABLE_DDC
     SpitfireDoDDC(pScrn);
 #endif
@@ -1203,7 +1224,7 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
                           16 * 8,
                           128, 2048, 
                           pScrn->virtualX, pScrn->virtualY,
-                          pdrv->videoRambytes, 
+                          pdrv->endfb,
                           LOOKUP_BEST_REFRESH);
 
     if (i == -1) {
@@ -1607,6 +1628,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
     /* do it! */
     SpitfireWriteMode(pScrn, vganew, new, TRUE);
     SpitfireAdjustFrame(ADJUST_FRAME_ARGS(pScrn, pScrn->frameX0, pScrn->frameY0));
+    SpitfireCursorAfterMode(pScrn);
 
     if (pdrv->DumpRegs) {
         ErrorF("After video mode initialization:\n");
@@ -1838,6 +1860,10 @@ void SpitfireLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indicies,
         outb(0x3c9, colors[index].blue);
         if (index == pScrn->colorKey) updateKey = index;
     }
+
+    /* The colors of an ARGB cursor at 8 bpp are the nearest entries */
+    if (pScrn->depth == 8 && pdrv->HWCursor && pdrv->CursorInfoRec && pdrv->CursorARGB)
+        SpitfireWriteCursorColors(pScrn);
 }
 
 /*
@@ -2144,6 +2170,12 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
 
     miDCInitialize(pScreen, xf86GetPointerScreenFuncs());
 
+    if (pdrv->HWCursor && !SpitfireHWCursorInit(pScreen)) {
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+                   "Hardware cursor initialization failed; using the software cursor\n");
+        pdrv->HWCursor = FALSE;
+    }
+
     if (pdrv->shadowFB) {
         RefreshAreaFuncPtr refreshArea = SpitfireRefreshArea;
       
@@ -2213,9 +2245,14 @@ static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL)
     }
 
     if (pScrn->vtSema) {
+        SpitfireHideCursor(pScrn);
         SpitfireWriteMode(pScrn, vgaSavePtr, SpitfireSavePtr, FALSE);
         vgaHWLock(hwp);
         SpitfireUnmapMem(pScrn, 0);
+    }
+    if (pdrv->CursorInfoRec) {
+        xf86DestroyCursorInfoRec(pdrv->CursorInfoRec);
+        pdrv->CursorInfoRec = NULL;
     }
 
     if (pdrv->pVbe)
@@ -2296,8 +2333,333 @@ static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL)
 
     TRACE(("SpitfireLeaveVT(%d)\n", flags));
 
+    SpitfireHideCursor(pScrn);
     SpitfireWriteMode(pScrn, vgaSavePtr, SpitfireSavePtr, FALSE);
     SpitfireDisableMMIO(pScrn);
+}
+
+/* ------------------------------------------------------------------ */
+/* Hardware cursor of the 64111                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The 64111 has a 64x64 cursor with two colors, transparent and inverted
+ * pixels, in MMIO 0x80-0x97, programmed as OAK's Windows 3.1 driver and the
+ * KMS driver do (init_64111/oakcursor --windows):
+ *
+ *   0x80  position: X in the low 16 bits, Y in the high ones, signed (the
+ *         cursor enters through the top and left edges as it is)
+ *   0x84  start within the 64x64 image (0)
+ *   0x88  image address / 8
+ *   0x8c  color 0, 0x90 color 1, in the pixel format of the mode (at 8 bpp
+ *         a palette index)
+ *   0x94  control: 0x15 on, 0x14 off (bit 2: bit 7 is the leftmost pixel)
+ *   0x96  0
+ *
+ * The image: two 1 bpp masks as in a Windows cursor (AND 1 XOR 0
+ * transparent, AND 0 XOR 0 color 0, AND 0 XOR 1 color 1, AND 1 XOR 1
+ * inverted), in rows of 16 bytes interleaved by dwords: XOR of pixels 0-31,
+ * AND of 0-31, XOR of 32-63, AND of 32-63. The server builds it from an X
+ * cursor with the flags of SpitfireHWCursorInit: source as XOR (and'ed with
+ * the mask, so that hidden pixels are not inverted), inverted mask as AND,
+ * 32-bit interleave, MSB first; so color 0 is the background and color 1
+ * the foreground. Two images alternate at CursorOffset: a new one is written
+ * into the one not shown, and then the cursor is pointed at it.
+ *
+ * A mode set (the sequencer reset) clears the control register: see
+ * SpitfireCursorAfterMode. Interlaced and double scan modes get the
+ * software cursor: where the chip puts the cursor in them is not known.
+ */
+#define SPITFIRE_CURSOR_SIZE    64
+#define SPITFIRE_CURSOR_BYTES   1024
+#define SPITFIRE_HC_POS         0x80
+#define SPITFIRE_HC_PRESET      0x84
+#define SPITFIRE_HC_ADDR        0x88
+#define SPITFIRE_HC_COLOR0      0x8c
+#define SPITFIRE_HC_COLOR1      0x90
+#define SPITFIRE_HC_CTRL        0x94
+#define SPITFIRE_HC_CTRL_ON     0x15
+#define SPITFIRE_HC_CTRL_OFF    0x14
+#define SPITFIRE_HW_CTRL        0x96
+
+/*
+ * The palette entry nearest to a color. It allocates nothing (unlike
+ * FakeAllocColor, which can take a free cell and store the color in it, and
+ * so call SpitfireLoadPalette): the entries of the installed map are what
+ * the DAC has, and whatever changes them calls SpitfireLoadPalette, which
+ * looks for the nearest entry again.
+ */
+static int SpitfireNearestIndex(ColormapPtr pmap, int r, int g, int b)
+{
+    int i, best = 0;
+    unsigned long dist, bestdist = ~0UL;
+
+    for (i = 0; i < pmap->pVisual->ColormapEntries; i++) {
+        EntryPtr pent = &pmap->red[i];
+        long dr, dg, db;
+
+        if (pent->fShared) {
+            dr = (pent->co.shco.red->color >> 8) - r;
+            dg = (pent->co.shco.green->color >> 8) - g;
+            db = (pent->co.shco.blue->color >> 8) - b;
+        } else {
+            dr = (pent->co.local.red >> 8) - r;
+            dg = (pent->co.local.green >> 8) - g;
+            db = (pent->co.local.blue >> 8) - b;
+        }
+        dist = dr * dr + dg * dg + db * db;
+        if (dist < bestdist) {
+            bestdist = dist;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/*
+ * A cursor color (CursorBg or CursorFg) in the format of the mode. The
+ * server gives the colors of a two-color cursor at 8 bpp as indices; those
+ * of an ARGB cursor are the nearest entries of the installed map. Above
+ * 8 bpp, the pixel the server gives that color in the installed map, as the
+ * software cursor does (with 6 bits per component at depth 16 that is not
+ * always the color truncated), or else the color truncated.
+ */
+static CARD32 SpitfireCursorPixel(ScrnInfoPtr pScrn, int color)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    int r = (color >> 16) & 0xff, g = (color >> 8) & 0xff, b = color & 0xff;
+    ColormapPtr pmap = NULL;
+
+    if (pScrn->depth == 8 && !pdrv->CursorARGB)
+        return color & 0xff;
+    if (pScrn->pScreen)
+#ifdef GetInstalledmiColormap
+        pmap = GetInstalledmiColormap(pScrn->pScreen);
+#else
+        pmap = miInstalledMaps[pScrn->pScreen->myNum];
+#endif
+    if (pmap && pScrn->depth == 8)
+        return SpitfireNearestIndex(pmap, r, g, b);
+    if (pmap) {
+        xColorItem item;
+
+        item.red = r * 257;
+        item.green = g * 257;
+        item.blue = b * 257;
+        FakeAllocColor(pmap, &item);
+        FakeFreeColor(pmap, item.pixel);
+        return item.pixel & 0xffffff;
+    }
+
+    switch (pScrn->depth) {
+    case 8:
+        return 0;               /* no installed map yet */
+    case 15:
+        return (r >> 3) << 10 | (g >> 3) << 5 | (b >> 3);
+    case 16:
+        return (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
+    default:
+        return color & 0xffffff;
+    }
+}
+
+static void SpitfireWriteCursorColors(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+
+    MMIO_OUT32(SPITFIRE_MMIO, SPITFIRE_HC_COLOR0, SpitfireCursorPixel(pScrn, pdrv->CursorBg));
+    MMIO_OUT32(SPITFIRE_MMIO, SPITFIRE_HC_COLOR1, SpitfireCursorPixel(pScrn, pdrv->CursorFg));
+}
+
+static void SpitfireSetCursorColors(ScrnInfoPtr pScrn, int bg, int fg)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+
+    pdrv->CursorBg = bg;
+    pdrv->CursorFg = fg;
+    pdrv->CursorARGB = FALSE;
+    SpitfireWriteCursorColors(pScrn);
+}
+
+static void SpitfireSetCursorPosition(ScrnInfoPtr pScrn, int x, int y)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+
+    MMIO_OUT32(SPITFIRE_MMIO, SPITFIRE_HC_POS, (CARD32)(x & 0xffff) | ((CARD32)(y & 0xffff) << 16));
+}
+
+/* Writes an image into the slot not shown and points the cursor at it */
+static void SpitfireLoadCursorImage(ScrnInfoPtr pScrn, unsigned char *src)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    unsigned long base;
+
+    pdrv->CursorSlot ^= 1;
+    base = pdrv->CursorOffset + pdrv->CursorSlot * SPITFIRE_CURSOR_BYTES;
+    memcpy(pdrv->FBBase + base, src, SPITFIRE_CURSOR_BYTES);
+    MMIO_OUT32(SPITFIRE_MMIO, SPITFIRE_HC_ADDR, base / 8);
+}
+
+static void SpitfireHideCursor(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+
+    if (!pdrv->HWCursor)
+        return;
+    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_HC_CTRL, SPITFIRE_HC_CTRL_OFF);
+    pdrv->CursorShown = FALSE;
+}
+
+static void SpitfireShowCursor(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+
+    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_HW_CTRL, 0);
+    MMIO_OUT32(SPITFIRE_MMIO, SPITFIRE_HC_PRESET, 0);
+    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_HC_CTRL, SPITFIRE_HC_CTRL_ON);
+    pdrv->CursorShown = TRUE;
+}
+
+/*
+ * A mode set clears the control register (the sequencer reset; position,
+ * start and address are kept), and the colors depend on the pixel format.
+ */
+static void SpitfireCursorAfterMode(ScrnInfoPtr pScrn)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+
+    if (!pdrv->HWCursor || !pdrv->CursorInfoRec)
+        return;
+    SpitfireWriteCursorColors(pScrn);
+    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_HC_CTRL,
+              pdrv->CursorShown ? SPITFIRE_HC_CTRL_ON : SPITFIRE_HC_CTRL_OFF);
+}
+
+static Bool SpitfireUseHWCursor(ScreenPtr pScreen, CursorPtr pCurs)
+{
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+    DisplayModePtr mode = pScrn->currentMode;
+
+    return !(mode && (mode->Flags & (V_INTERLACE | V_DBLSCAN)));
+}
+
+#ifdef ARGB_CURSOR
+/*
+ * An ARGB cursor (premultiplied alpha) as the KMS driver converts it: alpha
+ * below one half is transparent; the other pixels are color 0 if dark and
+ * color 1 if light, by their luminance, each color the average of its
+ * pixels. The usual black and white pointers come out as they are. At
+ * 8 bpp each color is the nearest entry of the palette, looked for again
+ * whenever the palette changes (SpitfireLoadPalette).
+ */
+static Bool SpitfireUseHWCursorARGB(ScreenPtr pScreen, CursorPtr pCurs)
+{
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+
+    return pCurs->bits->width <= SPITFIRE_CURSOR_SIZE &&
+           pCurs->bits->height <= SPITFIRE_CURSOR_SIZE &&
+           SpitfireUseHWCursor(pScreen, pCurs);
+}
+
+static void SpitfireLoadCursorARGB(ScrnInfoPtr pScrn, CursorPtr pCurs)
+{
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    unsigned char image[SPITFIRE_CURSOR_BYTES];
+    CARD32 sum[2][3] = { { 0 } }, count[2] = { 0 };
+    int w = pCurs->bits->width, h = pCurs->bits->height, x, y, i, c;
+
+    /* All transparent: XOR 0, AND 1 */
+    for (i = 0; i < SPITFIRE_CURSOR_BYTES; i++)
+        image[i] = (i & 4) ? 0xff : 0x00;
+
+    for (y = 0; y < h; y++) {
+        CARD32 *line = pCurs->bits->argb + y * w;
+
+        for (x = 0; x < w; x++) {
+            CARD32 p = line[x], a = p >> 24, r, g, b;
+            unsigned char *xor, bit;
+
+            if (a < 0x80)
+                continue;
+            r = ((p >> 16) & 0xff) * 255 / a;
+            g = ((p >> 8) & 0xff) * 255 / a;
+            b = (p & 0xff) * 255 / a;
+            r = r > 255 ? 255 : r;
+            g = g > 255 ? 255 : g;
+            b = b > 255 ? 255 : b;
+            c = ((r * 77 + g * 150 + b * 29) >> 8) >= 128;
+            sum[c][0] += r;
+            sum[c][1] += g;
+            sum[c][2] += b;
+            count[c]++;
+
+            xor = image + y * 16 + (x / 32) * 8 + (x % 32) / 8;
+            bit = 0x80 >> (x % 8);
+            xor[4] &= ~bit;                     /* AND 0: opaque */
+            if (c)
+                xor[0] |= bit;                  /* XOR 1: color 1 */
+        }
+    }
+    for (c = 0; c < 2; c++) {
+        int rgb = count[c] ? (int)((sum[c][0] / count[c]) << 16 |
+                                   (sum[c][1] / count[c]) << 8 |
+                                   sum[c][2] / count[c]) : 0;
+
+        if (c)
+            pdrv->CursorFg = rgb;
+        else
+            pdrv->CursorBg = rgb;
+    }
+    pdrv->CursorARGB = TRUE;
+    SpitfireWriteCursorColors(pScrn);
+    SpitfireLoadCursorImage(pScrn, image);
+}
+#endif
+
+static Bool SpitfireHWCursorInit(ScreenPtr pScreen)
+{
+    ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+    SpitfirePtr pdrv = DEVPTR(pScrn);
+    xf86CursorInfoPtr info;
+
+    if (!(info = xf86CreateCursorInfoRec()))
+        return FALSE;
+    pdrv->CursorInfoRec = info;
+
+    info->MaxWidth = SPITFIRE_CURSOR_SIZE;
+    info->MaxHeight = SPITFIRE_CURSOR_SIZE;
+    info->Flags = HARDWARE_CURSOR_INVERT_MASK |
+                  HARDWARE_CURSOR_AND_SOURCE_WITH_MASK |
+                  HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_32 |
+                  HARDWARE_CURSOR_BIT_ORDER_MSBFIRST;
+#ifdef HARDWARE_CURSOR_UPDATE_UNHIDDEN
+    /* A new image goes into the slot not shown: no need to hide it */
+    info->Flags |= HARDWARE_CURSOR_UPDATE_UNHIDDEN;
+#endif
+    info->SetCursorColors = SpitfireSetCursorColors;
+    info->SetCursorPosition = SpitfireSetCursorPosition;
+    info->LoadCursorImage = SpitfireLoadCursorImage;
+    info->HideCursor = SpitfireHideCursor;
+    info->ShowCursor = SpitfireShowCursor;
+    info->UseHWCursor = SpitfireUseHWCursor;
+#ifdef ARGB_CURSOR
+    info->Flags |= HARDWARE_CURSOR_ARGB;
+    info->UseHWCursorARGB = SpitfireUseHWCursorARGB;
+    info->LoadCursorARGB = SpitfireLoadCursorARGB;
+#endif
+
+    MMIO_OUT8(SPITFIRE_MMIO, SPITFIRE_HC_CTRL, SPITFIRE_HC_CTRL_OFF);
+    pdrv->CursorShown = FALSE;
+    pdrv->CursorSlot = 0;
+
+    if (!xf86InitCursor(pScreen, info)) {
+        xf86DestroyCursorInfoRec(info);
+        pdrv->CursorInfoRec = NULL;
+        return FALSE;
+    }
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Using the hardware cursor, images at %lu KB\n",
+               pdrv->CursorOffset / 1024);
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ */
