@@ -32,6 +32,7 @@ spitfire_drv_la_SOURCES = \
          spitfire_driver.c \
          spitfire_vbe.c \
          spitfire_shadow.c \
+         spitfire_video.c \
          spitfire_driver.h \
          spitfire_vbe.h \
          spitfire_accel.h \

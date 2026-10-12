@@ -251,6 +251,7 @@ typedef enum {
     ,OPTION_IGNORE_EDID
     ,OPTION_DUMP_REGS
     ,OPTION_HW_CURSOR
+    ,OPTION_XVIDEO
 } SpitfireOpts;
 
 
@@ -265,6 +266,7 @@ static const OptionInfoRec SpitfireOptions[] =
     { OPTION_INIT_BIOS,     "InitBIOS",     OPTV_BOOLEAN,   {0}, FALSE },
     { OPTION_DUMP_REGS,     "DumpRegs",     OPTV_BOOLEAN,   {0}, FALSE },
     { OPTION_HW_CURSOR,     "HWCursor",     OPTV_BOOLEAN,   {0}, FALSE },
+    { OPTION_XVIDEO,        "XVideo",       OPTV_BOOLEAN,   {0}, FALSE },
 
     { -1,                NULL,                OPTV_NONE,    {0}, FALSE }
 };
@@ -928,6 +930,13 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
     if (pdrv->Chipset != OAK_64111)
         pdrv->HWCursor = FALSE;
 
+    pdrv->Xv = (pdrv->Chipset == OAK_64111);
+    if (xf86GetOptValBool(pdrv->Options, OPTION_XVIDEO, &pdrv->Xv))
+        xf86DrvMsg(pScrn->scrnIndex, X_CONFIG, "Video overlay (Xv) %s\n",
+                   pdrv->Xv ? "enabled" : "disabled");
+    if (pdrv->Chipset != OAK_64111)
+        pdrv->Xv = FALSE;
+
     if (xf86GetOptValBool(pdrv->Options, OPTION_DUMP_REGS, &pdrv->DumpRegs) )
         from = X_CONFIG;
     if (pdrv->DumpRegs)
@@ -1590,11 +1599,17 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
          */
         new->OR20 = 0xC6;
 
+        /*
+         * EX30, the DAC: high nibble the format of the picture, low nibble
+         * that of the video overlay, which must be 3 or the colors of the
+         * video come out wrong at 8 and 16 bpp (see spitfire_video.c; the
+         * 8 bpp palette is not affected)
+         */
         switch (pScrn->depth) {
         case 8:
             new->OR21 |= 0x00;
             new->OR38 = 0x02;
-            new->EX30 = 0x00;
+            new->EX30 = 0x03;
             new->EX31 = 0x2c; /* Enable 8-bit DAC */
             break;
         case 15:
@@ -1602,12 +1617,12 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
             new->OR38 = 0x05 | 0x20;
             /* DAC in XRGB1555, as the BIOS in its 15-bit modes. 0x22 is
                RGB565, and shows the 15-bit colors wrong. */
-            new->EX30 = 0x11;
+            new->EX30 = 0x13;
             break;
         case 16:
             new->OR21 |= 0x40;
             new->OR38 = 0x05 | 0x20;
-            new->EX30 = 0x22;
+            new->EX30 = 0x23;
             break;
         case 24:
         case 32:
@@ -1629,6 +1644,7 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
     SpitfireWriteMode(pScrn, vganew, new, TRUE);
     SpitfireAdjustFrame(ADJUST_FRAME_ARGS(pScrn, pScrn->frameX0, pScrn->frameY0));
     SpitfireCursorAfterMode(pScrn);
+    SpitfireVideoAfterMode(pScrn);
 
     if (pdrv->DumpRegs) {
         ErrorF("After video mode initialization:\n");
@@ -2176,6 +2192,9 @@ static Bool SpitfireScreenInit(SCREEN_INIT_ARGS_DECL)
         pdrv->HWCursor = FALSE;
     }
 
+    if (pdrv->Xv)
+        SpitfireInitVideo(pScreen);
+
     if (pdrv->shadowFB) {
         RefreshAreaFuncPtr refreshArea = SpitfireRefreshArea;
       
@@ -2225,6 +2244,9 @@ static Bool SpitfireCloseScreen(CLOSE_SCREEN_ARGS_DECL)
     SpitfireRegPtr SpitfireSavePtr = &pdrv->SavedReg;
 
     TRACE(("SpitfireCloseScreen\n"));
+
+    /* Its buffers come from EXA */
+    SpitfireVideoOff(pScrn, TRUE);
 
     if (pdrv->EXADriverPtr) {
         exaDriverFini(pScreen);
@@ -2334,6 +2356,7 @@ static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL)
     TRACE(("SpitfireLeaveVT(%d)\n", flags));
 
     SpitfireHideCursor(pScrn);
+    SpitfireVideoOff(pScrn, FALSE);
     SpitfireWriteMode(pScrn, vgaSavePtr, SpitfireSavePtr, FALSE);
     SpitfireDisableMMIO(pScrn);
 }
@@ -2931,7 +2954,7 @@ static Bool SpitfireHWInit(ScrnInfoPtr pScrn)
 
 /*
  * The hardware cursor (MMIO 0x80-0x97) and the two video overlay windows
- * (MMIO 0xb0-0xdd) are not used by this driver, but a previous user (the
+ * (MMIO 0xb0-0xdd; this driver uses window 0 for Xv): a previous user (the
  * KMS driver, a test program) may have left them on over the picture.
  */
 static void SpitfireQuietHW(ScrnInfoPtr pScrn)

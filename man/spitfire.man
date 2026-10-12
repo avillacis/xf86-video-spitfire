@@ -68,6 +68,17 @@ installed colormap, looked for again whenever the colormap changes. Interlaced
 and double scan modes always use the software cursor.
 The cursor images take the top 2 KB of video memory. Default: on for the
 OTI-64111.
+.TP
+.BI "Option \*qXVideo\*q \*q" boolean \*q
+Enable or disable the Xv adaptor for the video overlay of the OTI-64111:
+one port, on overlay window 0, for YUY2, UYVY, YV12 and I420 images, shown
+where the window has the color key (attributes XV_COLORKEY and
+XV_AUTOPAINT_COLORKEY). The overlay only scales up, and reads at most 720
+bytes (360 pixels) per line, within the memory bandwidth that the mode leaves
+(208 pixels at 1024x768 and depth 16); larger images are reduced on the CPU
+first, by nearest neighbor. The image buffers come from EXA offscreen memory
+(without EXA, from the memory below the cursor images). Interlaced and double
+scan modes are refused. Default: on for the OTI-64111.
 .SH "SEE ALSO"
 __xservername__(1), __xconfigfile__(__filemansuffix__), xorgconfig(1), Xserver(1), X(__miscmansuffix__)
 .SH AUTHORS

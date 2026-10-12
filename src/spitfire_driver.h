@@ -183,6 +183,10 @@ typedef struct _Spitfire {
     int				CursorSlot;	/* the one shown */
     int				CursorBg, CursorFg;	/* 0xRRGGBB, or index at 8 bpp... */
     Bool			CursorARGB;	/* ...unless the cursor is ARGB */
+
+    /* Video overlay, see spitfire_video.c */
+    Bool			Xv;
+    void			*VideoPriv;
     int				rotate;
 
     CloseScreenProcPtr	CloseScreen;
@@ -266,6 +270,12 @@ unsigned short SpitfireGetBIOSModes(
     SpitfirePtr psav,
     int iDepth,
     SpitfireModeEntryPtr oakModeTable );
+
+/* In spitfire_video.c */
+
+void SpitfireInitVideo(ScreenPtr pScreen);
+void SpitfireVideoAfterMode(ScrnInfoPtr pScrn);
+void SpitfireVideoOff(ScrnInfoPtr pScrn, Bool close);
 
 /* In spitfire_shadow.c */
 

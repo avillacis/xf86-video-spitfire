@@ -23,10 +23,14 @@ This driver supports:
 * minimal XAA/EXA acceleration for bitblt and pattern fill (XAA only, now deprecated in Xorg) operations within video memory.
 * the 64x64 two-color hardware cursor of the 64111 (Option "HWCursor", on by default); ARGB cursors are reduced to two
   colors (at 8 bpp, the nearest palette entries), and interlaced or double scan modes use the software cursor
+* the video overlay of the 64111 as an Xv adaptor (Option "XVideo", on by default): one port on overlay window 0,
+  YUY2, UYVY, YV12 and I420 images, with a destination color key. The overlay only scales up and reads at most 720
+  bytes (360 pixels) per line, within the memory bandwidth the mode leaves (208 pixels at 1024x768x16); wider or
+  larger images are reduced on the CPU first. Not in interlaced or double scan modes
 
 Not supported due to lack of documentation:
 * DDC/I2C support for EDID
-* Hardware video overlays
+* The second overlay window, and RGB overlay formats
 * I2C passthrough to slave devices such as video capture
 
 If the card is bound to a kernel driver (such as the oak64111 KMS driver), this driver leaves it alone and says so in
