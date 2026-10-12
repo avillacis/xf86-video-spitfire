@@ -1414,6 +1414,28 @@ static Bool SpitfireModeInit(ScrnInfoPtr pScrn, DisplayModePtr mode)
         pitch = (pScrn->displayWidth * (pScrn->bitsPerPixel / 8)) >> 4;
         vganew->CRTC[0x13] = pitch & 0xff;
 
+        /*
+         * Ends of the horizontal and vertical blanking. vgaHWInit() passes
+         * them through vgaHWHBlankKGA()/vgaHWVBlankKGA() with
+         * KGA_ENABLE_ON_ZERO, which moves an end that would fall on the
+         * last character or line of the frame to 0, "to enable the display
+         * at the beginning". On this chip the blanking registers take
+         * effect one line (one character) later: with the vertical end at 0
+         * the first line of the picture is blanked, and the white top border
+         * of a test pattern did not show in 1280x800 and 800x600 at 63 Hz.
+         * The values of the KMS driver, checked on screen at every mode:
+         * htotal/8 - 2 (the end has 6 bits, compared with the low bits of
+         * the character counter, and must come before the last character)
+         * and vtotal - 1 (8 bits).
+         */
+        {
+            int hbe = (mode->CrtcHTotal >> 3) - 2;
+
+            vganew->CRTC[3] = (vganew->CRTC[3] & ~0x1f) | (hbe & 0x1f);
+            vganew->CRTC[5] = (vganew->CRTC[5] & ~0x80) | ((hbe & 0x20) << 2);
+            vganew->CRTC[0x16] = (mode->CrtcVTotal - 1) & 0xff;
+        }
+
         /* For Mode Select, it has been observed that 8-bit modes have 0 in the 
          * high nibble, 15 and 16-bit modes have 4, and 24-bit modes have 2. 
          * In all cases the low nibble has 0x0C with bits 0 and 1 set to 0, 
