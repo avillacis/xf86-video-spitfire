@@ -162,6 +162,7 @@ static void SpitfireCalcClock(long freq, unsigned int *mdiv,
 static Bool SpitfireEnterVT(VT_FUNC_ARGS_DECL);
 static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL);
 static void SpitfireSave(ScrnInfoPtr pScrn);
+static void SpitfireFixVGAClock(ScrnInfoPtr pScrn);
 static void SpitfirePrintRegs(ScrnInfoPtr pScrn);
 static void SpitfireWriteMode(ScrnInfoPtr pScrn, vgaRegPtr, SpitfireRegPtr, Bool);
 
@@ -887,6 +888,8 @@ static Bool SpitfirePreInit(ScrnInfoPtr pScrn, int flags)
         if (xf86LoadSubModule(pScrn, "vbe")) {
             pdrv->pVbe = VBEInit(NULL, pEnt->index);
         }
+        if (pdrv->Chipset == OAK_64111)
+            SpitfireFixVGAClock(pScrn);
     }
 
     if (pdrv->DumpRegs) {
@@ -2181,6 +2184,45 @@ static void SpitfireLeaveVT(VT_FUNC_ARGS_DECL)
     SpitfireDisableMMIO(pScrn);
 }
 
+/*
+ * A VGA mode (OAK 0x21 bit 2 clear) uses the fixed clocks 0 (25.175 MHz,
+ * 8-dot characters) or 1 (28.322 MHz, 9-dot). The BIOS soft-boot of the
+ * InitBIOS option sets text mode 3 in every register but Misc Output: after
+ * the KMS driver it kept 0xcf, clock 3 at 65 MHz, and the text mode came
+ * out at 72 kHz, out of range for the monitor, from the soft-boot until the
+ * first mode set and again after the server exited (it restores the state
+ * saved after the soft-boot). Returns the clock the mode should have, or
+ * -1 if Misc Output already selects a fixed one or the mode is not VGA.
+ */
+static int SpitfireVGAClock(unsigned char misc, unsigned char sr01,
+                            unsigned char or21)
+{
+    if ((or21 & 0x04) || ((misc >> 2) & 3) < 2)
+        return -1;
+    return (sr01 & 0x01) ? 0 : 1;
+}
+
+/* After the BIOS soft-boot: the clock of the mode it set, see above */
+static void SpitfireFixVGAClock(ScrnInfoPtr pScrn)
+{
+    unsigned char misc = inb(0x3cc), sr01, or21;
+    int clk;
+
+    outb(0x3c4, 0x01);
+    sr01 = inb(0x3c5);
+    outb(SPITFIRE_INDEX, 0x21);
+    or21 = inb(SPITFIRE_DATA);
+    clk = SpitfireVGAClock(misc, sr01, or21);
+    if (clk < 0)
+        return;
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+               "VGA mode after the BIOS with clock %d in Misc Output (0x%02x): "
+               "selecting clock %d\n", (misc >> 2) & 3, misc, clk);
+    outb(0x3c2, (misc & ~0x0c) | (clk << 2));
+    OTI_OUTB(clk | 0xe0, 0x06);
+    OTI_OUTB(clk | 0x60, 0x06);
+}
+
 static void SpitfireSave(ScrnInfoPtr pScrn)
 {
     vgaHWPtr hwp = VGAHWPTR(pScrn);
@@ -2215,6 +2257,27 @@ static void SpitfireSave(ScrnInfoPtr pScrn)
     outb(SPITFIRE_INDEX, 0x32); save->OR32 = inb(SPITFIRE_DATA); /* HSYNC/2 Start */
     outb(SPITFIRE_INDEX, 0x33); save->OR33 = inb(SPITFIRE_DATA); /* CRT Address Compatibility */
     outb(SPITFIRE_INDEX, 0x38); save->OR38 = inb(SPITFIRE_DATA); /* Pixel Interface */
+
+    /* The clock of the saved mode, see SpitfireVGAClock() */
+    {
+        int clk = SpitfireVGAClock(vgaSavePtr->MiscOutReg,
+                                   vgaSavePtr->Sequencer[1], save->OR21);
+
+        if (clk >= 0) {
+            xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+                       "Saved VGA mode with clock %d in Misc Output (0x%02x): "
+                       "using clock %d\n", (vgaSavePtr->MiscOutReg >> 2) & 3,
+                       vgaSavePtr->MiscOutReg, clk);
+            vgaSavePtr->MiscOutReg = (vgaSavePtr->MiscOutReg & ~0x0c) | (clk << 2);
+        }
+    }
+
+    /*
+     * SpitfireWriteMode() writes the clock of OR06 into Misc Output too, so
+     * it must be the clock of the saved mode, the one in Misc Output: OAK
+     * 0x06 may still hold the clock of a previous mode.
+     */
+    save->OR06 = (vgaSavePtr->MiscOutReg >> 2) & 3;
 
     save->MM0A = SPITFIRE_MMIO[0x0a];
 
